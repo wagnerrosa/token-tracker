@@ -14,9 +14,25 @@ if (!OPENAI_API_KEY) {
 const app = express();
 const PORT = 4000;
 const OPENAI_BASE = "https://api.openai.com";
+const { execSync } = require("child_process");
+
 const USAGE_DIR = path.join(process.cwd(), ".ai-tracker");
-const USAGE_FILE = path.join(USAGE_DIR, "usage.json");
 const FETCH_TIMEOUT_MS = 15_000;
+
+function getUsername() {
+  try {
+    const name = execSync("git config user.name", { stdio: ["pipe", "pipe", "ignore"] })
+      .toString()
+      .trim();
+    if (name) return name.toLowerCase().replace(/\s+/g, "");
+  } catch {}
+  const actor = process.env.GITHUB_ACTOR;
+  if (actor) return actor.toLowerCase().replace(/\s+/g, "");
+  return "unknown";
+}
+
+const USERNAME = getUsername();
+const USAGE_FILE = path.join(USAGE_DIR, `${USERNAME}-usage.json`);
 
 // Simple write queue to prevent race conditions
 let writeQueue = Promise.resolve();
@@ -159,7 +175,7 @@ async function appendEntry(entry) {
     }
   } catch (err) {
     if (err.code !== "ENOENT") {
-      console.warn("[ai-tracker] Corrupted usage.json, resetting:", err.message);
+      console.warn(`[ai-tracker] Corrupted ${USERNAME}-usage.json, resetting:`, err.message);
     }
   }
 
@@ -178,4 +194,5 @@ app.listen(PORT, () => {
   const masked = OPENAI_API_KEY.slice(0, 5) + "..." + OPENAI_API_KEY.slice(-4);
   console.log(`[ai-tracker] Proxy running on http://localhost:${PORT}`);
   console.log(`[ai-tracker] Using OpenAI key: ${masked}`);
+  console.log(`[ai-tracker] Logging usage for user: ${USERNAME}`);
 });
