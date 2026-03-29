@@ -1,6 +1,15 @@
+require("dotenv").config();
+
 const express = require("express");
 const fs = require("fs/promises");
 const path = require("path");
+
+// --- Fail fast if API key is missing ---
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+if (!OPENAI_API_KEY) {
+  console.error("[ai-tracker] Missing OPENAI_API_KEY. Set it in .env or environment.");
+  process.exit(1);
+}
 
 const app = express();
 const PORT = 4000;
@@ -16,7 +25,17 @@ let writeQueue = Promise.resolve();
 const HOP_BY_HOP = new Set([
   "connection", "keep-alive", "transfer-encoding",
   "te", "trailer", "upgrade", "host", "content-length",
+  "authorization", // stripped — we inject our own
 ]);
+
+// Per-token pricing (USD)
+const PRICING = {
+  "gpt-4o-mini": { input: 0.00000015, output: 0.0000006 },
+  "gpt-4o": { input: 0.0000025, output: 0.00001 },
+  "gpt-4-turbo": { input: 0.00001, output: 0.00003 },
+  "gpt-4": { input: 0.00003, output: 0.00006 },
+  "gpt-3.5-turbo": { input: 0.0000005, output: 0.0000015 },
+};
 
 // Parse raw body so we can forward it
 app.use(express.raw({ type: "*/*", limit: "10mb" }));
@@ -25,13 +44,14 @@ app.use(express.raw({ type: "*/*", limit: "10mb" }));
 app.all("/v1/*splat", async (req, res) => {
   const targetUrl = `${OPENAI_BASE}${req.originalUrl}`;
 
-  // Forward headers, stripping hop-by-hop and normalizing auth casing
+  // Forward headers, stripping hop-by-hop and client auth
   const headers = {};
   for (const [key, value] of Object.entries(req.headers)) {
     if (HOP_BY_HOP.has(key.toLowerCase())) continue;
     headers[key] = value;
   }
   headers["host"] = new URL(OPENAI_BASE).host;
+  headers["Authorization"] = `Bearer ${OPENAI_API_KEY}`;
 
   try {
     const abort = new AbortController();
@@ -92,18 +112,37 @@ async function saveUsage(json) {
     return;
   }
 
+  const model = json.model || "unknown";
+  // Match versioned model names like "gpt-4o-mini-2024-07-18" → "gpt-4o-mini"
+  const pricingKey = Object.keys(PRICING).find((k) => model.startsWith(k)) || model;
+  const pricing = PRICING[pricingKey];
+
+  if (!pricing) {
+    console.warn(`[ai-tracker] Unknown model "${model}" — storing tokens without cost`);
+  }
+
+  const cost_input = pricing ? prompt_tokens * pricing.input : 0;
+  const cost_output = pricing ? completion_tokens * pricing.output : 0;
+
   const entry = {
     provider: "openai",
-    model: json.model || "unknown",
+    model,
     tokens_input: prompt_tokens,
     tokens_output: completion_tokens,
     total_tokens,
+    cost_input: round(cost_input),
+    cost_output: round(cost_output),
+    cost_total: round(cost_input + cost_output),
     timestamp: new Date().toISOString(),
   };
 
   // Queue writes to prevent race conditions
   writeQueue = writeQueue.then(() => appendEntry(entry));
   return writeQueue;
+}
+
+function round(n) {
+  return Math.round(n * 1e10) / 1e10; // avoid floating-point noise
 }
 
 async function appendEntry(entry) {
@@ -126,7 +165,9 @@ async function appendEntry(entry) {
 
   data.push(entry);
   await fs.writeFile(USAGE_FILE, JSON.stringify(data, null, 2));
-  console.log(`[ai-tracker] +${entry.total_tokens} tokens (${entry.model})`);
+
+  const costStr = entry.cost_total > 0 ? ` ~$${entry.cost_total.toFixed(6)}` : "";
+  console.log(`[ai-tracker] +${entry.total_tokens} tokens (${entry.model})${costStr}`);
 }
 
 app.use((req, res) => {
@@ -134,5 +175,7 @@ app.use((req, res) => {
 });
 
 app.listen(PORT, () => {
+  const masked = OPENAI_API_KEY.slice(0, 5) + "..." + OPENAI_API_KEY.slice(-4);
   console.log(`[ai-tracker] Proxy running on http://localhost:${PORT}`);
+  console.log(`[ai-tracker] Using OpenAI key: ${masked}`);
 });
