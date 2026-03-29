@@ -3,7 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const USAGE_DIR = path.join(process.cwd(), ".ai-tracker");
+const USAGE_DIR = path.join(process.cwd(), ".token-tracker");
 
 function loadAllEntries() {
   if (!fs.existsSync(USAGE_DIR)) return [];
@@ -22,7 +22,7 @@ function loadAllEntries() {
         }
       }
     } catch {
-      console.warn(`[ai-tracker] Could not read ${file}, skipping`);
+      console.warn(`[tt] Could not read ${file}, skipping`);
     }
   }
 
@@ -51,7 +51,7 @@ const command = process.argv[2];
 
 const entries = loadAllEntries();
 if (entries.length === 0) {
-  console.log("No usage data found in .ai-tracker/");
+  console.log("No usage data found in .token-tracker/");
   process.exit(0);
 }
 
@@ -66,7 +66,7 @@ if (command === "leaderboard") {
   console.log();
 } else {
   // Default: stats
-  console.log("\nAI Tracker — Usage Summary\n");
+  console.log("\nTokenTracker — Usage Summary\n");
   console.log(`  Total tokens : ${totalTokens.toLocaleString()}`);
   console.log(`  Total cost   : $${totalCost.toFixed(6)}`);
   console.log(`  Total requests: ${entries.length}`);

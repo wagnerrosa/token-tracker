@@ -1,10 +1,10 @@
 {
-  "name": "ai-tracker",
+  "name": "token-tracker",
   "version": "1.0.0",
-  "description": "",
+  "description": "Track LLM token usage per project",
   "main": "index.js",
   "bin": {
-    "ai-tracker": "./cli.js"
+    "tt": "./cli.js"
   },
   "scripts": {
     "start": "node server.js",

@@ -7,7 +7,7 @@ const path = require("path");
 // --- Fail fast if API key is missing ---
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 if (!OPENAI_API_KEY) {
-  console.error("[ai-tracker] Missing OPENAI_API_KEY. Set it in .env or environment.");
+  console.error("[tt] Missing OPENAI_API_KEY. Set it in .env or environment.");
   process.exit(1);
 }
 
@@ -16,7 +16,7 @@ const PORT = 4000;
 const OPENAI_BASE = "https://api.openai.com";
 const { execSync } = require("child_process");
 
-const USAGE_DIR = path.join(process.cwd(), ".ai-tracker");
+const USAGE_DIR = path.join(process.cwd(), ".token-tracker");
 const FETCH_TIMEOUT_MS = 15_000;
 
 function getUsername() {
@@ -83,7 +83,7 @@ app.all("/v1/*splat", async (req, res) => {
     clearTimeout(timer);
 
     if (!response.ok) {
-      console.error(`[ai-tracker] Upstream error: ${response.status}`);
+      console.error(`[tt] Upstream error: ${response.status}`);
     }
 
     const contentType = response.headers.get("content-type") || "";
@@ -96,11 +96,11 @@ app.all("/v1/*splat", async (req, res) => {
         const json = JSON.parse(bodyBuffer.toString("utf-8"));
         if (json.usage) {
           saveUsage(json).catch((err) =>
-            console.error("[ai-tracker] Failed to save usage:", err.message)
+            console.error("[tt] Failed to save usage:", err.message)
           );
         }
       } catch (err) {
-        console.error("[ai-tracker] Failed to parse JSON response:", err.message);
+        console.error("[tt] Failed to parse JSON response:", err.message);
       }
     }
 
@@ -112,10 +112,10 @@ app.all("/v1/*splat", async (req, res) => {
     res.status(response.status).send(bodyBuffer);
   } catch (err) {
     if (err.name === "AbortError") {
-      console.error("[ai-tracker] Request timeout after", FETCH_TIMEOUT_MS, "ms");
+      console.error("[tt] Request timeout after", FETCH_TIMEOUT_MS, "ms");
       return res.status(504).json({ error: "Gateway Timeout" });
     }
-    console.error("[ai-tracker] Proxy error:", err.message);
+    console.error("[tt] Proxy error:", err.message);
     res.status(502).json({ error: "Proxy error", message: err.message });
   }
 });
@@ -124,7 +124,7 @@ async function saveUsage(json) {
   const { prompt_tokens, completion_tokens, total_tokens } = json.usage;
 
   if (prompt_tokens == null || completion_tokens == null || total_tokens == null) {
-    console.warn("[ai-tracker] Skipping: missing token fields in usage", json.usage);
+    console.warn("[tt] Skipping: missing token fields in usage", json.usage);
     return;
   }
 
@@ -134,7 +134,7 @@ async function saveUsage(json) {
   const pricing = PRICING[pricingKey];
 
   if (!pricing) {
-    console.warn(`[ai-tracker] Unknown model "${model}" — storing tokens without cost`);
+    console.warn(`[tt] Unknown model "${model}" — storing tokens without cost`);
   }
 
   const cost_input = pricing ? prompt_tokens * pricing.input : 0;
@@ -171,11 +171,11 @@ async function appendEntry(entry) {
     if (Array.isArray(parsed)) {
       data = parsed;
     } else {
-      console.warn("[ai-tracker] usage.json is not an array, resetting");
+      console.warn("[tt] usage.json is not an array, resetting");
     }
   } catch (err) {
     if (err.code !== "ENOENT") {
-      console.warn(`[ai-tracker] Corrupted ${USERNAME}-usage.json, resetting:`, err.message);
+      console.warn(`[tt] Corrupted ${USERNAME}-usage.json, resetting:`, err.message);
     }
   }
 
@@ -183,7 +183,7 @@ async function appendEntry(entry) {
   await fs.writeFile(USAGE_FILE, JSON.stringify(data, null, 2));
 
   const costStr = entry.cost_total > 0 ? ` ~$${entry.cost_total.toFixed(6)}` : "";
-  console.log(`[ai-tracker] +${entry.total_tokens} tokens (${entry.model})${costStr}`);
+  console.log(`[tt] +${entry.total_tokens} tokens (${entry.model})${costStr}`);
 }
 
 app.use((req, res) => {
@@ -192,7 +192,7 @@ app.use((req, res) => {
 
 app.listen(PORT, () => {
   const masked = OPENAI_API_KEY.slice(0, 5) + "..." + OPENAI_API_KEY.slice(-4);
-  console.log(`[ai-tracker] Proxy running on http://localhost:${PORT}`);
-  console.log(`[ai-tracker] Using OpenAI key: ${masked}`);
-  console.log(`[ai-tracker] Logging usage for user: ${USERNAME}`);
+  console.log(`[tt] Proxy running on http://localhost:${PORT}`);
+  console.log(`[tt] Using OpenAI key: ${masked}`);
+  console.log(`[tt] Logging usage for user: ${USERNAME}`);
 });
