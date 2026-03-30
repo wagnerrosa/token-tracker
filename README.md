@@ -15,11 +15,12 @@ Ferramentas de IA (Claude Code, Codex, Gemini, OpenCode) registram dados de uso 
 - Não rastreiam uso por time
 
 **TokenTracker** lê esses logs locais e oferece:
-- 📊 Resumo de uso por dia/semana/mês
-- 🗂️ Agregação automática por projeto
-- 💰 Custo real (não estimado)
-- 🔄 Cache inteligente (warm/cold path)
-- 📁 Dados locais persistentes
+- Resumo de uso por dia/semana/mês
+- Agregação automática por projeto
+- Custo real via LiteLLM pricing
+- Cache inteligente (warm/cold path)
+- Proxy OpenAI com captura de uso
+- Dados locais persistentes
 
 ---
 
@@ -43,50 +44,60 @@ tt
 ```
 
 ```
-Hoje (2026-03-29)
+Hoje (2026-03-30)
 
   Input:   5.4k
   Output:  35.7k
-  Cache ↑: 9.3M
-  Custo:   $0.0000
+  Cache:   9.3M
+  Custo:   $0.1234
 
   Modelos:
-    claude-haiku-4-5-20251001            $0.0000  (26x)
-    claude-opus-4-6                      $0.0000  (110x)
-    claude-sonnet-4-6                    $0.0000  (63x)
+    claude-haiku-4-5-20251001            $0.0120  (26x)
+    claude-sonnet-4-6                    $0.0890  (63x)
 ```
 
 ### Últimos 7 dias
 
 ```bash
 tt daily
-```
-
-```
-Últimos 7 dias
-
-date        input       output      cost
-────────────────────────────────────────────────
-2026-03-23  292         21.3k       $0.0000
-2026-03-24  11.1k       67.7k       $0.0000
-2026-03-25  37.6k       70.6k       $0.0000
-2026-03-26  3.6k        46.3k       $0.0000
-2026-03-27  1.3k        25.8k       $0.0000
-2026-03-28  13.0k       43.6k       $0.0000
-2026-03-29  5.4k        35.8k       $0.0000
+tt daily --json    # saída JSON
 ```
 
 ### Últimas 4 semanas
 
 ```bash
 tt weekly
+tt weekly --json
 ```
 
-### Saída JSON
+### Projetos
 
 ```bash
-tt daily --json
+tt projects        # ranking de projetos por custo
+tt --project .     # filtra pelo projeto do diretório atual
+tt daily --project .   # combinável com subcomandos
 ```
+
+### Proxy OpenAI
+
+```bash
+node server.js     # inicia proxy na porta 4000
+# Configure OPENAI_BASE_URL=http://localhost:4000/v1 na sua app
+```
+
+O proxy intercepta chamadas OpenAI, calcula custo via pricing service, e salva no cache. Dados aparecem em `tt daily`.
+
+---
+
+## Providers Suportados
+
+| Provider | Fonte de dados | Parser |
+|----------|---------------|--------|
+| **Claude Code** | `~/.claude/projects/**/*.jsonl` | Streaming JSONL + dedup |
+| **Codex** | `~/.codex/sessions/**/*.jsonl` | Delta tracking stateful |
+| **Gemini** | `~/.gemini/tmp/*/chats/session-*.json` | JSON sessão + filtro por tipo |
+| **OpenCode** | `~/.local/share/opencode/**/msg_*.json` | JSON por mensagem |
+| **OpenAI (proxy)** | Interceptado via server.js | Captura automática |
 
 ---
 
@@ -94,15 +105,19 @@ tt daily --json
 
 ```
 ~/.claude/projects/**/*.jsonl  ─┐
-~/.codex/sessions/**/*.jsonl   ─┼─→ Parsers ─→ Cache ─→ CLI
-~/.gemini/tmp/*/chats/*.json   ─┤  (warm/cold)
-~/.local/share/opencode/*/*.json ┘
+~/.codex/sessions/**/*.jsonl   ─┼─→ Parsers ─→ Aggregator ─→ Cache ─→ CLI
+~/.gemini/tmp/*/chats/*.json   ─┤     │          (warm/cold)
+~/.local/share/opencode/*/*.json┘     │
+                                      ├─→ Normalizer (nomes de modelos)
+                                      └─→ Pricing (LiteLLM + fallback)
 ```
 
 1. **Parsers especializados** — lêem logs locais de cada ferramenta
-2. **Agregação** — agrupa entries em `DailySummary` por data
-3. **Cache inteligente** — warm path (rápido) e cold path (completo)
-4. **CLI** — mostra dados formatados ou JSON
+2. **Agregação** — agrupa entries em `DailySummary` por data com breakdown por modelo
+3. **Cache inteligente** — warm path (só arquivos novos) e cold path (completo)
+4. **Pricing** — custo real via LiteLLM com cache local (TTL 1h)
+5. **Normalização** — `claude-sonnet-4-20250514` → `Sonnet 4`
+6. **CLI** — mostra dados formatados ou JSON
 
 ---
 
@@ -111,29 +126,32 @@ tt daily --json
 ```
 src/
   parsers/
-    claude.js      # Parser Claude Code JSONL
+    claude.js        # Parser Claude Code JSONL
+    codex.js         # Parser Codex com delta tracking
+    gemini.js        # Parser Gemini CLI
+    opencode.js      # Parser OpenCode CLI
+    index.js         # Registry de parsers
   services/
-    cache.js       # Warm/cold path cache
-    aggregator.js  # Agregação por dia/semana/mês
-  types.js         # Modelos de dados
-  cli.js           # Entry point CLI
+    cache.js         # Warm/cold path cache
+    aggregator.js    # Agregação por dia/semana/mês
+    projects.js      # Agregação por projeto
+    normalizer.js    # Normalização de nomes de modelos
+    pricing.js       # Pricing via LiteLLM
+  types.js           # Modelos de dados e constantes
+  cli.js             # Entry point CLI
+server.js            # Proxy OpenAI + captura de uso
 ```
 
 ### Modelo de dados
 
-**UsageEntry** — uma mensagem/interação:
+**UsageEntry** — uma interação individual:
 ```js
 {
-  timestamp,
-  source: "claude" | "codex" | "gemini" | "opencode",
-  provider: "anthropic" | "openai" | "google" | null,
-  model: string,
+  timestamp, source, provider, model,
   input_tokens, output_tokens,
   cache_read_tokens, cache_creation_tokens,
-  thinking_tokens,
-  cost_usd,
-  project,    // derivado do path
-  dedup_key   // para deduplicação
+  thinking_tokens, cost_usd,
+  project, dedup_key
 }
 ```
 
@@ -141,12 +159,10 @@ src/
 ```js
 {
   date: "YYYY-MM-DD",
-  total_input_tokens,
-  total_output_tokens,
-  total_cost_usd,
-  models: {
-    "claude-opus-4": { input_tokens, output_tokens, cost_usd, count }
-  }
+  total_input_tokens, total_output_tokens,
+  cache_read_tokens, cache_creation_tokens,
+  thinking_tokens, total_cost_usd,
+  models: { [name]: { input_tokens, output_tokens, cost_usd, count } }
 }
 ```
 
@@ -155,18 +171,31 @@ src/
 ## Cache
 
 Salvo em `~/.token-tracker/cache/`:
-- `claude_daily.json` — resumos diários do Claude Code
 
-**Warm path** (rápido):
-- Lê apenas arquivos modificados desde último cache
-- Recomputa hoje (sempre completo)
-- Merge com dias passados
+| Arquivo | Conteúdo |
+|---------|----------|
+| `claude_daily.json` | Resumos diários do Claude Code |
+| `codex_daily.json` | Resumos diários do Codex |
+| `gemini_daily.json` | Resumos diários do Gemini |
+| `opencode_daily.json` | Resumos diários do OpenCode |
+| `openai-proxy_daily.json` | Resumos do proxy OpenAI |
 
-**Cold path** (completo):
-- Full parse de todos os arquivos
-- Cria cache do zero
+**Warm path** — rápido: lê apenas arquivos modificados desde último cache, recomputa hoje, merge com passado.
 
-Versioning automático — mudanças na lógica invalidam cache.
+**Cold path** — completo: full parse de todos os arquivos, cria cache do zero.
+
+Versionamento automático — mudanças na lógica invalidam cache.
+
+---
+
+## Pricing
+
+Custo calculado via [LiteLLM pricing table](https://github.com/BerriAI/litellm):
+
+- Cache local em `~/.token-tracker/pricing.json` (TTL 1h)
+- Lookup: exato → normalizado → fuzzy substring
+- Usa `costUSD` nativo do Claude quando disponível
+- Fallback: custo 0 (nunca falha)
 
 ---
 
@@ -179,35 +208,43 @@ Versioning automático — mudanças na lógica invalidam cache.
 | 3 | ✅ | CLAUDE PARSER — streaming JSONL |
 | 4 | ✅ | CACHE — warm/cold path |
 | 5 | ✅ | CLI MÍNIMA — `tt`, `tt daily`, `tt weekly` |
-| 6 | ⏳ | PROJETOS — agregação por projeto |
-| 7 | ⏳ | CODEX PARSER — delta tracking |
-| 8 | ⏳ | GEMINI + OPENCODE — multi-provider |
-| 9 | ⏳ | NORMALIZAÇÃO + PRICING — nomes + custos |
-| 10 | ⏳ | PROXY UPGRADE — adaptar server.js |
-| 11 | ⏳ | PRODUTO — watch mode, API REST, alertas |
+| 6 | ✅ | PROJETOS — `tt projects`, `tt --project .` |
+| 7 | ✅ | CODEX PARSER — delta tracking stateful |
+| 8 | ✅ | GEMINI + OPENCODE — parsers + registry |
+| 9 | ✅ | NORMALIZAÇÃO + PRICING — nomes + custos LiteLLM |
+| 10 | ✅ | PROXY UPGRADE — server.js integrado |
+| 11a | ⏳ | Consolidação multi-provider na CLI |
+| 11b | ⏳ | Watch mode |
+| 11c | ⏳ | API REST |
+| 11d | ⏳ | Dashboard web |
+| 11e | ⏳ | Alertas e budgets |
 
 ---
 
 ## Desenvolvimento
 
 ```bash
-# Testes das parsers
-node -e "require('./src/parsers/claude').parseAll().then(e => console.log(e.length))"
-
-# Debug do cache
-node -e "require('./src/services/cache').loadCache('claude')"
-
-# Executar CLI
+# CLI
 node src/cli.js
 node src/cli.js daily
 node src/cli.js daily --json
+node src/cli.js projects
+node src/cli.js --project .
+
+# Proxy
+node server.js
+
+# Testar parsers
+node -e "require('./src/parsers/claude').parseAll().then(e => console.log(e.length))"
+node -e "require('./src/parsers/codex').parseAll().then(e => console.log(e.length))"
+node -e "require('./src/parsers').getAll().map(p => console.log(p.name))"
+
+# Testar pricing
+node -e "require('./src/services/pricing').getCache().then(c => console.log(Object.keys(c.models).length, 'models'))"
+
+# Testar normalizer
+node -e "const n = require('./src/services/normalizer'); console.log(n.displayName(n.normalizeModelName('claude-sonnet-4-20250514')))"
 ```
-
----
-
-## Env vars
-
-Nenhuma obrigatória por enquanto. Configuração é 100% local.
 
 ---
 
