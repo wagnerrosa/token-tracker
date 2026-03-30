@@ -1,235 +1,216 @@
-# TokenTracker
+# TokenTracker (TT)
 
-**Track LLM token usage per project.**
+**Rastreia uso de tokens de LLMs por projeto e usuário.**
 
----
-
-## Why
-
-LLM API usage is invisible by default. Most teams have no idea how many tokens each developer consumes, which models cost the most, or how usage changes over time.
-
-Existing solutions require centralized platforms, database setups, or vendor-specific dashboards.
-
-TokenTracker takes a different approach:
-
-- **Local-first** — data stays in your project directory
-- **Lightweight** — single proxy server, no database
-- **Developer-friendly** — works with any OpenAI-compatible client, zero config on the client side
+Observabilidade local-first para consumo de IA sem banco de dados, sem serviços externos.
 
 ---
 
-## Features
+## Por quê
 
-- Intercepts LLM API requests via local proxy
-- Tracks token usage and estimated cost per request
-- Multi-user tracking based on Git identity
-- CLI analytics (summary, leaderboard)
-- Automatic API key injection (clients don't need the key)
-- File-based storage (no external dependencies)
+Ferramentas de IA (Claude Code, Codex, Gemini, OpenCode) registram dados de uso localmente, mas esses dados:
+- São apagados após 30 dias
+- Não têm agregação por projeto
+- Não mostram custos comparativos
+- Não rastreiam uso por time
 
----
-
-## How it works
-
-```
-Client App → localhost:4000 → OpenAI API
-                  ↓
-           Capture usage
-                  ↓
-         .token-tracker/{user}-usage.json
-```
-
-1. Your app sends requests to `http://localhost:4000` instead of `api.openai.com`
-2. The proxy forwards requests to OpenAI, injecting the API key
-3. On response, token usage and cost are extracted and stored locally
-4. Each developer gets their own usage file, identified by `git config user.name`
+**TokenTracker** lê esses logs locais e oferece:
+- 📊 Resumo de uso por dia/semana/mês
+- 🗂️ Agregação automática por projeto
+- 💰 Custo real (não estimado)
+- 🔄 Cache inteligente (warm/cold path)
+- 📁 Dados locais persistentes
 
 ---
 
-## Installation
+## Instalação
 
 ```bash
-git clone <repo-url>
-cd token-tracker
 npm install
+npm install -g .
 ```
 
-Create a `.env` file:
-
-```bash
-cp .env.example .env
-# Edit .env and add your OpenAI API key
-```
-
-```
-OPENAI_API_KEY=sk-your-key-here
-```
-
-Optional — install the CLI globally:
-
-```bash
-npm link
-```
+Agora `tt` funciona em qualquer diretório.
 
 ---
 
-## Usage
+## Uso
 
-### Start the proxy
-
-```bash
-npm start
-# or
-node server.js
-```
-
-```
-[tt] Proxy running on http://localhost:4000
-[tt] Using OpenAI key: sk-pr...nKcA
-[tt] Logging usage for user: wagnerrosa
-```
-
-### Make a request
-
-Point your client to `http://localhost:4000` instead of `https://api.openai.com`:
-
-```bash
-curl http://localhost:4000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-4o-mini",
-    "messages": [{"role": "user", "content": "Hello"}],
-    "stream": false
-  }'
-```
-
-The proxy logs each request:
-
-```
-[tt] +14 tokens (gpt-4o-mini-2024-07-18) ~$0.000003
-```
-
-### CLI
-
-**Summary** — total usage with breakdown by user:
+### Resumo de hoje
 
 ```bash
 tt
 ```
 
 ```
-TokenTracker — Usage Summary
+Hoje (2026-03-29)
 
-  Total tokens : 217
-  Total cost   : $0.010010
-  Total requests: 5
+  Input:   5.4k
+  Output:  35.7k
+  Cache ↑: 9.3M
+  Custo:   $0.0000
 
-  Breakdown by user:
-
-  wagnerrosa
-    tokens   : 67
-    cost     : $0.000010
-    requests : 4
-  joao
-    tokens   : 150
-    cost     : $0.010000
-    requests : 1
+  Modelos:
+    claude-haiku-4-5-20251001            $0.0000  (26x)
+    claude-opus-4-6                      $0.0000  (110x)
+    claude-sonnet-4-6                    $0.0000  (63x)
 ```
 
-**Leaderboard** — users ranked by cost:
+### Últimos 7 dias
 
 ```bash
-tt leaderboard
+tt daily
 ```
 
 ```
-Leaderboard (by cost)
+Últimos 7 dias
 
-  1. joao — $0.010000 (150 tokens)
-  2. wagnerrosa — $0.000010 (67 tokens)
+date        input       output      cost
+────────────────────────────────────────────────
+2026-03-23  292         21.3k       $0.0000
+2026-03-24  11.1k       67.7k       $0.0000
+2026-03-25  37.6k       70.6k       $0.0000
+2026-03-26  3.6k        46.3k       $0.0000
+2026-03-27  1.3k        25.8k       $0.0000
+2026-03-28  13.0k       43.6k       $0.0000
+2026-03-29  5.4k        35.8k       $0.0000
+```
+
+### Últimas 4 semanas
+
+```bash
+tt weekly
+```
+
+### Saída JSON
+
+```bash
+tt daily --json
 ```
 
 ---
 
-## File structure
+## Como funciona
 
 ```
-.token-tracker/
-  wagnerrosa-usage.json
-  joao-usage.json
+~/.claude/projects/**/*.jsonl  ─┐
+~/.codex/sessions/**/*.jsonl   ─┼─→ Parsers ─→ Cache ─→ CLI
+~/.gemini/tmp/*/chats/*.json   ─┤  (warm/cold)
+~/.local/share/opencode/*/*.json ┘
 ```
 
-- One file per user (derived from `git config user.name`)
-- Each file contains an array of usage entries
-- Append-only — new requests are added, never overwritten
-- Local to the project — add to `.gitignore` or commit to track team usage
+1. **Parsers especializados** — lêem logs locais de cada ferramenta
+2. **Agregação** — agrupa entries em `DailySummary` por data
+3. **Cache inteligente** — warm path (rápido) e cold path (completo)
+4. **CLI** — mostra dados formatados ou JSON
 
-Each entry:
+---
 
-```json
+## Arquitetura
+
+```
+src/
+  parsers/
+    claude.js      # Parser Claude Code JSONL
+  services/
+    cache.js       # Warm/cold path cache
+    aggregator.js  # Agregação por dia/semana/mês
+  types.js         # Modelos de dados
+  cli.js           # Entry point CLI
+```
+
+### Modelo de dados
+
+**UsageEntry** — uma mensagem/interação:
+```js
 {
-  "provider": "openai",
-  "model": "gpt-4o-mini-2024-07-18",
-  "tokens_input": 12,
-  "tokens_output": 2,
-  "total_tokens": 14,
-  "cost_input": 0.0000018,
-  "cost_output": 0.0000012,
-  "cost_total": 0.000003,
-  "timestamp": "2026-03-29T19:49:51.609Z"
+  timestamp,
+  source: "claude" | "codex" | "gemini" | "opencode",
+  provider: "anthropic" | "openai" | "google" | null,
+  model: string,
+  input_tokens, output_tokens,
+  cache_read_tokens, cache_creation_tokens,
+  thinking_tokens,
+  cost_usd,
+  project,    // derivado do path
+  dedup_key   // para deduplicação
+}
+```
+
+**DailySummary** — agregação diária:
+```js
+{
+  date: "YYYY-MM-DD",
+  total_input_tokens,
+  total_output_tokens,
+  total_cost_usd,
+  models: {
+    "claude-opus-4": { input_tokens, output_tokens, cost_usd, count }
+  }
 }
 ```
 
 ---
 
-## User detection
+## Cache
 
-The proxy identifies the current user via this fallback chain:
+Salvo em `~/.token-tracker/cache/`:
+- `claude_daily.json` — resumos diários do Claude Code
 
-1. `git config user.name` (normalized: lowercase, no spaces)
-2. `GITHUB_ACTOR` environment variable
-3. `"unknown"`
+**Warm path** (rápido):
+- Lê apenas arquivos modificados desde último cache
+- Recomputa hoje (sempre completo)
+- Merge com dias passados
+
+**Cold path** (completo):
+- Full parse de todos os arquivos
+- Cria cache do zero
+
+Versioning automático — mudanças na lógica invalidam cache.
 
 ---
 
 ## Roadmap
 
-### Phase 1 — Foundations
-- [ ] JSONL storage (append-only, safer writes)
-- [ ] Data normalization (consistent cost + tokens)
-- [ ] Stable user identity (based on Git)
-
-### Phase 2 — Multi-provider & CLI
-- [ ] Anthropic support
-- [ ] CLI structure (`tt init`, `tt stats`)
-- [ ] `tt init` for project setup
-
-### Phase 3 — Analysis
-- [ ] Breakdown by model
-- [ ] Filter by user
-- [ ] Filter by time range
-
-### Phase 4 — Git integration
-- [ ] Track repo, branch, commit per request
-- [ ] Cost per PR / feature
-
-### Phase 5 — Distribution
-- [ ] Publish CLI via npm
-- [ ] Stable installation flow
-
-### Phase 6 — Export & integrations
-- [ ] JSON output mode
-- [ ] CSV export
-
-### Phase 7 — Visualization
-- [ ] Local dashboard
-
-### Phase 8 — Developer experience
-- [ ] CLI styling (chalk)
-- [ ] Improved terminal UX
+| Fase | Status | Descrição |
+|------|--------|-----------|
+| 1 | ✅ | CLEANUP — estrutura de pastas |
+| 2 | ✅ | DATA MODEL — tipos e constantes |
+| 3 | ✅ | CLAUDE PARSER — streaming JSONL |
+| 4 | ✅ | CACHE — warm/cold path |
+| 5 | ✅ | CLI MÍNIMA — `tt`, `tt daily`, `tt weekly` |
+| 6 | ⏳ | PROJETOS — agregação por projeto |
+| 7 | ⏳ | CODEX PARSER — delta tracking |
+| 8 | ⏳ | GEMINI + OPENCODE — multi-provider |
+| 9 | ⏳ | NORMALIZAÇÃO + PRICING — nomes + custos |
+| 10 | ⏳ | PROXY UPGRADE — adaptar server.js |
+| 11 | ⏳ | PRODUTO — watch mode, API REST, alertas |
 
 ---
 
-## License
+## Desenvolvimento
+
+```bash
+# Testes das parsers
+node -e "require('./src/parsers/claude').parseAll().then(e => console.log(e.length))"
+
+# Debug do cache
+node -e "require('./src/services/cache').loadCache('claude')"
+
+# Executar CLI
+node src/cli.js
+node src/cli.js daily
+node src/cli.js daily --json
+```
+
+---
+
+## Env vars
+
+Nenhuma obrigatória por enquanto. Configuração é 100% local.
+
+---
+
+## Licença
 
 ISC
