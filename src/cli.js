@@ -2,9 +2,10 @@
 "use strict";
 
 const { loadForParser } = require("./services/cache");
-const { daily, weekly } = require("./services/aggregator");
+const { daily, weekly, mergeAllSummaries } = require("./services/aggregator");
 const { aggregateByProject, cwdToHash } = require("./services/projects");
-const claude = require("./parsers/claude");
+const { getAll } = require("./parsers");
+const { normalizeModelName, displayName } = require("./services/normalizer");
 
 const [, , cmd, ...args] = process.argv;
 const jsonFlag = args.includes("--json");
@@ -49,12 +50,25 @@ function printSummaryTable(summaries) {
   }
 }
 
+async function getAllEntries() {
+  let entries = [];
+  for (const parser of getAll()) {
+    entries = entries.concat(await parser.parseAll());
+  }
+  return entries;
+}
+
 async function main() {
-  // Auto-scan: always warm path
-  const allSummaries = await loadForParser(claude);
+  // Auto-scan: load all parsers and merge summaries
+  const parsers = getAll();
+  const perParser = [];
+  for (const parser of parsers) {
+    perParser.push(await loadForParser(parser));
+  }
+  const allSummaries = mergeAllSummaries(perParser);
 
   if (cmd === "projects") {
-    const entries = await claude.parseAll();
+    const entries = await getAllEntries();
     const projects = aggregateByProject(entries);
     if (jsonFlag) {
       console.log(JSON.stringify(projects, null, 2));
@@ -85,7 +99,7 @@ async function main() {
   if (projectFlag !== null) {
     const dir = projectFlag === "." ? process.cwd() : require("path").resolve(projectFlag);
     const hash = cwdToHash(dir);
-    const entries = await claude.parseAll();
+    const entries = await getAllEntries();
     const projectEntries = entries.filter((e) => e.project === hash);
     if (projectEntries.length === 0) {
       console.log(`sem dados para projeto: ${dir}`);
@@ -146,8 +160,9 @@ async function main() {
   if (models.length > 0) {
     console.log("  Modelos:");
     for (const [model, usage] of models) {
+      const name = displayName(normalizeModelName(model));
       console.log(
-        `    ${model.padEnd(36)} ${fmtCost(usage.cost_usd)}  (${usage.count}x)`
+        `    ${name.padEnd(36)} ${fmtCost(usage.cost_usd)}  (${usage.count}x)`
       );
     }
   }

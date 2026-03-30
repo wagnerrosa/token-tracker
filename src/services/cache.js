@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const { CACHE_VERSION, CACHE_DIR } = require("../types");
 const aggregator = require("./aggregator");
+const { getCost } = require("./pricing");
 
 function cachePath(source) {
   return path.join(CACHE_DIR, `${source}_daily.json`);
@@ -60,6 +61,15 @@ async function getMaxMtime(parser) {
   return max;
 }
 
+async function applyPricing(entries) {
+  for (const entry of entries) {
+    if (entry.cost_usd === null || entry.cost_usd === undefined) {
+      entry.cost_usd = await getCost(entry);
+    }
+  }
+  return entries;
+}
+
 /**
  * Load data for a parser using cache-first strategy.
  *
@@ -87,12 +97,14 @@ async function loadForParser(parser) {
     const todayEntries = allEntries.filter(
       (e) => aggregator.localDate(e.timestamp) === today
     );
+    await applyPricing(todayEntries);
     const todaySummaries = aggregator.daily(todayEntries);
 
     // For past dates that appear in recent files (not today): recompute from recent
     const recentPast = recentEntries.filter(
       (e) => aggregator.localDate(e.timestamp) !== today
     );
+    await applyPricing(recentPast);
     const freshPastSummaries = aggregator.daily(recentPast);
 
     // Merge: past cached (minus dates in freshPast) + freshPast + today
@@ -111,6 +123,7 @@ async function loadForParser(parser) {
 
   // Cold path: full parse
   const entries = await parser.parseAll();
+  await applyPricing(entries);
   const summaries = aggregator.daily(entries);
   const maxMtime = await getMaxMtime(parser);
   saveCache(parser.name, summaries, maxMtime);

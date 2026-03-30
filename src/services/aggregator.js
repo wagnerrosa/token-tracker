@@ -149,4 +149,26 @@ function mergeSummaries(cached, fresh) {
   return [...map.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
-module.exports = { daily, weekly, monthly, mergeSummaries, localDate };
+/**
+ * Merge summaries from multiple parsers, accumulating by date.
+ * Unlike mergeSummaries (which overwrites), this SUMS tokens/cost
+ * when different sources share the same date.
+ */
+function mergeAllSummaries(arrayOfSummaryArrays) {
+  const map = new Map();
+
+  for (const summaries of arrayOfSummaryArrays) {
+    for (const s of summaries) {
+      let target = map.get(s.date);
+      if (!target) {
+        target = createDailySummary({ date: s.date, source: "all" });
+        map.set(s.date, target);
+      }
+      accumulate(target, s);
+    }
+  }
+
+  return [...map.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+module.exports = { daily, weekly, monthly, mergeSummaries, mergeAllSummaries, localDate };
