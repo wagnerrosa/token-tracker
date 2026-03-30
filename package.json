@@ -4,7 +4,7 @@
   "description": "Track LLM token usage per project",
   "main": "index.js",
   "bin": {
-    "tt": "./cli.js"
+    "tt": "./src/cli.js"
   },
   "scripts": {
     "start": "node server.js",
@@ -16,6 +16,7 @@
   "type": "commonjs",
   "dependencies": {
     "dotenv": "^17.3.1",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "glob": "^13.0.6"
   }
 }

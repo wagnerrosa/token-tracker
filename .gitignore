@@ -6,3 +6,10 @@ node_modules/
 env/
 dist/
 build/
+
+# TokenTracker cache e estado local
+~/.token-tracker/
+.token-tracker/
+
+# Fixtures e testes
+tests/fixtures/
