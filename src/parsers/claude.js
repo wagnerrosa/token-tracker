@@ -6,6 +6,7 @@ const os = require("os");
 const readline = require("readline");
 const { glob } = require("glob");
 const { createUsageEntry } = require("../types");
+const { toProjectFields } = require("../types/event");
 
 const DATA_DIR = path.join(os.homedir(), ".claude", "projects");
 
@@ -23,6 +24,8 @@ async function parseFile(filePath) {
   const relative = path.relative(DATA_DIR, filePath);
   const project = relative.split(path.sep)[0] || null;
 
+  let projectCwd = null;
+
   for await (const line of rl) {
     if (!line.trim()) continue;
 
@@ -32,6 +35,8 @@ async function parseFile(filePath) {
     } catch {
       continue; // skip invalid JSON
     }
+
+    if (!projectCwd && data.cwd) projectCwd = data.cwd;
 
     const msg = data.message;
     if (!msg || !msg.usage) continue; // skip lines without usage
@@ -51,24 +56,27 @@ async function parseFile(filePath) {
     if (dedupKey && seen.has(dedupKey)) continue;
     if (dedupKey) seen.add(dedupKey);
 
-    entries.push(
-      createUsageEntry({
-        timestamp: data.timestamp || null,
-        source: "claude",
-        provider: "anthropic",
-        model: msg.model || null,
-        input_tokens: usage.input_tokens || 0,
-        output_tokens: usage.output_tokens || 0,
-        cache_read_tokens: usage.cache_read_input_tokens || 0,
-        cache_creation_tokens: usage.cache_creation_input_tokens || 0,
-        thinking_tokens: 0,
-        cost_usd: data.costUSD ?? null,
-        message_id: messageId,
-        request_id: requestId,
-        project,
-        dedup_key: dedupKey,
-      })
-    );
+    const { project_id, project_path } = toProjectFields(projectCwd);
+
+    const entry = createUsageEntry({
+      timestamp: data.timestamp || null,
+      source: "claude",
+      provider: "anthropic",
+      model: msg.model || null,
+      input_tokens: usage.input_tokens || 0,
+      output_tokens: usage.output_tokens || 0,
+      cache_read_tokens: usage.cache_read_input_tokens || 0,
+      cache_creation_tokens: usage.cache_creation_input_tokens || 0,
+      thinking_tokens: 0,
+      cost_usd: data.costUSD ?? null,
+      message_id: messageId,
+      request_id: requestId,
+      project,
+      dedup_key: dedupKey,
+    });
+    entry.project_id = project_id;
+    entry.project_path = project_path;
+    entries.push(entry);
   }
 
   return entries;

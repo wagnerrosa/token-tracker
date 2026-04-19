@@ -1,15 +1,21 @@
 #!/usr/bin/env node
 "use strict";
 
-const { loadForParser } = require("./services/cache");
-const { daily, weekly, mergeAllSummaries } = require("./services/aggregator");
-const { aggregateByProject, cwdToHash } = require("./services/projects");
-const { getAll } = require("./parsers");
-const { normalizeModelName, displayName } = require("./services/normalizer");
+const fs = require("fs");
+const path = require("path");
+const { aggregate, byProject } = require("./aggregate");
+const { resolveModel } = require("./services/pricing");
+const { read: readEvents, ingestAll, enrichCosts } = require("./event-log");
+const { doctor } = require("./doctor");
+const { TT_HOME, CACHE_DIR } = require("./types");
 
-const [, , cmd, ...args] = process.argv;
-const jsonFlag = args.includes("--json");
-const projectFlag = args.includes("--project") ? args[args.indexOf("--project") + 1] : null;
+const [, , ...rest] = process.argv;
+let cmd = null;
+const jsonFlag = rest.includes("--json");
+const projectFlag = rest.includes("--project") ? rest[rest.indexOf("--project") + 1] : null;
+if (rest.length > 0 && !rest[0].startsWith("-")) {
+  cmd = rest[0];
+}
 
 function fmtTokens(n) {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
@@ -34,9 +40,7 @@ function printSummaryTable(summaries) {
     console.log("sem dados");
     return;
   }
-  const header = ["date", "input", "output", "cost"].map((h) =>
-    h.padEnd(12)
-  );
+  const header = ["date", "input", "output", "cost"].map((h) => h.padEnd(12));
   console.log(header.join(""));
   console.log("─".repeat(48));
   for (const s of summaries) {
@@ -50,26 +54,30 @@ function printSummaryTable(summaries) {
   }
 }
 
-async function getAllEntries() {
-  let entries = [];
-  for (const parser of getAll()) {
-    entries = entries.concat(await parser.parseAll());
+function warnOldCache() {
+  if (fs.existsSync(CACHE_DIR)) {
+    const flag = path.join(TT_HOME, ".cache_warning_shown");
+    if (!fs.existsSync(flag)) {
+      console.error(`Aviso: cache antigo detectado em ${CACHE_DIR} (não é mais usado).`);
+      console.error(`  Pode apagar com: rm -rf ${CACHE_DIR}`);
+      try { fs.writeFileSync(flag, "1"); } catch { /* ignore */ }
+    }
   }
-  return entries;
 }
 
 async function main() {
-  // Auto-scan: load all parsers and merge summaries
-  const parsers = getAll();
-  const perParser = [];
-  for (const parser of parsers) {
-    perParser.push(await loadForParser(parser));
+  if (cmd === "doctor") {
+    await doctor();
+    return;
   }
-  const allSummaries = mergeAllSummaries(perParser);
+
+  warnOldCache();
+  await ingestAll();
+  const events = await readEvents();
+  await enrichCosts(events);
 
   if (cmd === "projects") {
-    const entries = await getAllEntries();
-    const projects = aggregateByProject(entries);
+    const projects = byProject(events);
     if (jsonFlag) {
       console.log(JSON.stringify(projects, null, 2));
       return;
@@ -94,22 +102,22 @@ async function main() {
     return;
   }
 
-  // --project filter: resolve cwd or given path to hash
-  let filteredSummaries = allSummaries;
+  let scoped = events;
   if (projectFlag !== null) {
-    const dir = projectFlag === "." ? process.cwd() : require("path").resolve(projectFlag);
-    const hash = cwdToHash(dir);
-    const entries = await getAllEntries();
-    const projectEntries = entries.filter((e) => e.project === hash);
-    if (projectEntries.length === 0) {
-      console.log(`sem dados para projeto: ${dir}`);
+    const rawDir = projectFlag === "." ? process.cwd() : path.resolve(projectFlag);
+    let cwd;
+    try { cwd = fs.realpathSync(rawDir); } catch { cwd = rawDir; }
+    scoped = events.filter((e) => e.project_path === cwd);
+    if (scoped.length === 0) {
+      console.log(`sem dados para projeto: ${cwd}`);
       return;
     }
-    filteredSummaries = daily(projectEntries);
   }
 
+  const daily = aggregate(scoped, { granularity: "daily" });
+
   if (cmd === "daily") {
-    const last7 = filteredSummaries.slice(-7);
+    const last7 = daily.slice(-7);
     if (jsonFlag) {
       console.log(JSON.stringify(last7, null, 2));
     } else {
@@ -120,36 +128,34 @@ async function main() {
   }
 
   if (cmd === "weekly") {
-    const weeklySummaries = weekly(filteredSummaries).slice(-4);
+    const weekly = aggregate(scoped, { granularity: "weekly" }).slice(-4);
     if (jsonFlag) {
-      console.log(JSON.stringify(weeklySummaries, null, 2));
+      console.log(JSON.stringify(weekly, null, 2));
     } else {
       console.log("Últimas 4 semanas\n");
-      printSummaryTable(weeklySummaries);
+      printSummaryTable(weekly);
     }
     return;
   }
 
-  // Default: tt (today)
   const todayDate = today();
-  const todaySummary = filteredSummaries.find((s) => s.date === todayDate);
+  const todaySummary = daily.find((s) => s.date === todayDate);
 
   if (!todaySummary) {
     console.log("Hoje: sem dados");
     return;
   }
 
+  if (jsonFlag) {
+    console.log(JSON.stringify({ today: todayDate, daily: [todaySummary], weekly: daily }, null, 2));
+    return;
+  }
+
   console.log(`Hoje (${todayDate})\n`);
-  console.log(
-    `  Input:   ${fmtTokens(todaySummary.total_input_tokens)}`
-  );
-  console.log(
-    `  Output:  ${fmtTokens(todaySummary.total_output_tokens)}`
-  );
+  console.log(`  Input:   ${fmtTokens(todaySummary.total_input_tokens)}`);
+  console.log(`  Output:  ${fmtTokens(todaySummary.total_output_tokens)}`);
   if (todaySummary.cache_read_tokens > 0) {
-    console.log(
-      `  Cache ↑: ${fmtTokens(todaySummary.cache_read_tokens)}`
-    );
+    console.log(`  Cache ↑: ${fmtTokens(todaySummary.cache_read_tokens)}`);
   }
   console.log(`  Custo:   ${fmtCost(todaySummary.total_cost_usd)}`);
   console.log();
@@ -160,10 +166,8 @@ async function main() {
   if (models.length > 0) {
     console.log("  Modelos:");
     for (const [model, usage] of models) {
-      const name = displayName(normalizeModelName(model));
-      console.log(
-        `    ${name.padEnd(36)} ${fmtCost(usage.cost_usd)}  (${usage.count}x)`
-      );
+      const name = resolveModel(model).display;
+      console.log(`    ${name.padEnd(36)} ${fmtCost(usage.cost_usd)}  (${usage.count}x)`);
     }
   }
 }

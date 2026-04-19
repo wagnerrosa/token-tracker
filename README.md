@@ -2,7 +2,7 @@
 
 **Rastreia uso de tokens de LLMs por projeto e usuário.**
 
-Observabilidade local-first para consumo de IA sem banco de dados, sem serviços externos.
+Observabilidade local-first para consumo de IA. Sem banco de dados, sem serviços externos. Event log append-only como fonte de verdade.
 
 ---
 
@@ -11,16 +11,15 @@ Observabilidade local-first para consumo de IA sem banco de dados, sem serviços
 Ferramentas de IA (Claude Code, Codex, Gemini, OpenCode) registram dados de uso localmente, mas esses dados:
 - São apagados após 30 dias
 - Não têm agregação por projeto
-- Não mostram custos comparativos
+- Não mostram custos reais
 - Não rastreiam uso por time
 
 **TokenTracker** lê esses logs locais e oferece:
-- Resumo de uso por dia/semana/mês
-- Agregação automática por projeto
-- Custo real via LiteLLM pricing
-- Cache inteligente (warm/cold path)
-- Proxy OpenAI com captura de uso
-- Dados locais persistentes
+- Resumo unificado por dia/semana/projeto — todos os providers em uma visão
+- Custo real via [LiteLLM pricing](https://github.com/BerriAI/litellm) com cache local
+- `project_id` promovido a coluna de primeira classe no schema
+- Event log append-only em `~/.token-tracker/events/{source}/{date}.jsonl`
+- `tt doctor` para auditar saúde do sistema
 
 ---
 
@@ -44,80 +43,78 @@ tt
 ```
 
 ```
-Hoje (2026-03-30)
+Hoje (2026-04-19)
 
-  Input:   5.4k
-  Output:  35.7k
-  Cache:   9.3M
-  Custo:   $0.1234
+  Input:   543
+  Output:  87.2k
+  Cache ↑: 20.3M
+  Custo:   $11.0346
 
   Modelos:
-    claude-haiku-4-5-20251001            $0.0120  (26x)
-    claude-sonnet-4-6                    $0.0890  (63x)
+    Opus 4.7                             $5.9231  (86x)
+    Sonnet 4.6                           $4.1150  (130x)
+    Haiku 4.5                            $0.9965  (67x)
 ```
 
-### Últimos 7 dias
+### Últimos 7 dias / semanas
 
 ```bash
 tt daily
-tt daily --json    # saída JSON
-```
-
-### Últimas 4 semanas
-
-```bash
 tt weekly
-tt weekly --json
+tt daily --json    # saída JSON para scripts
 ```
 
 ### Projetos
 
 ```bash
-tt projects        # ranking de projetos por custo
-tt --project .     # filtra pelo projeto do diretório atual
-tt daily --project .   # combinável com subcomandos
+tt projects              # ranking de projetos por custo
+tt --project .           # filtra pelo projeto do cwd (via realpath)
+tt daily --project .     # combinável com subcomandos
 ```
 
-### Proxy OpenAI
+### Auditoria
 
 ```bash
-node server.js     # inicia proxy na porta 4000
-# Configure OPENAI_BASE_URL=http://localhost:4000/v1 na sua app
+tt doctor                # reporta estado do event log, cursores, modelos sem pricing
 ```
-
-O proxy intercepta chamadas OpenAI, calcula custo via pricing service, e salva no cache. Dados aparecem em `tt daily`.
 
 ---
 
-## Providers Suportados
+## Providers suportados
 
-| Provider | Fonte de dados | Parser |
-|----------|---------------|--------|
-| **Claude Code** | `~/.claude/projects/**/*.jsonl` | Streaming JSONL + dedup |
-| **Codex** | `~/.codex/sessions/**/*.jsonl` | Delta tracking stateful |
-| **Gemini** | `~/.gemini/tmp/*/chats/session-*.json` | JSON sessão + filtro por tipo |
-| **OpenCode** | `~/.local/share/opencode/**/msg_*.json` | JSON por mensagem |
-| **OpenAI (proxy)** | Interceptado via server.js | Captura automática |
+| Provider | Fonte de dados | Observações |
+|----------|---------------|-------------|
+| **Claude Code** | `~/.claude/projects/**/*.jsonl` | `costUSD` nativo, `project_path` via campo `cwd` |
+| **Codex** | `~/.codex/sessions/**/*.jsonl` | Delta tracking stateful (cursor persiste `prev_totals_by_session`) |
+| **Gemini** | `~/.gemini/tmp/*/chats/session-*.json` | thinking_tokens suportado |
+| **OpenCode** | `~/.local/share/opencode/**/msg_*.json` | reasoning_tokens + cache read/write |
+
+Todos os providers são agregados em uma única visão unificada.
 
 ---
 
 ## Como funciona
 
 ```
-~/.claude/projects/**/*.jsonl  ─┐
-~/.codex/sessions/**/*.jsonl   ─┼─→ Parsers ─→ Aggregator ─→ Cache ─→ CLI
-~/.gemini/tmp/*/chats/*.json   ─┤     │          (warm/cold)
-~/.local/share/opencode/*/*.json┘     │
-                                      ├─→ Normalizer (nomes de modelos)
-                                      └─→ Pricing (LiteLLM + fallback)
+~/.claude/...            ─┐
+~/.codex/...              ─┤                       events/{source}/{date}.jsonl
+~/.gemini/...             ─┼─→ Parsers (com cursor) ─→ append-only (source of truth)
+~/.local/share/opencode/  ─┘                                        │
+                                                                    │
+                                                      ┌─────────────┴─────────────┐
+                                                      ▼                           ▼
+                                                aggregate(events)           pricing.js
+                                                 (função pura)              (tabela MODELS
+                                                      │                     + LiteLLM)
+                                                      ▼
+                                                 CLI / doctor
 ```
 
-1. **Parsers especializados** — lêem logs locais de cada ferramenta
-2. **Agregação** — agrupa entries em `DailySummary` por data com breakdown por modelo
-3. **Cache inteligente** — warm path (só arquivos novos) e cold path (completo)
-4. **Pricing** — custo real via LiteLLM com cache local (TTL 1h)
-5. **Normalização** — `claude-sonnet-4-20250514` → `Sonnet 4`
-6. **CLI** — mostra dados formatados ou JSON
+1. **Parsers especializados** — lêem logs locais, emitem `UsageEvent` deduplicado via cursor
+2. **Event log append-only** — arquivos `events/{source}/{YYYY-MM-DD}.jsonl`, zero reescrita
+3. **Cursor atômico** — `cursors/{source}.json` persiste `seen_keys_today` + `source_specific`
+4. **Pricing determinístico** — tabela `MODELS` com aliases + LiteLLM table (sem fuzzy matching)
+5. **Agregação pura** — `aggregate(events, {granularity, project, since, until})` sem classes, sem cache
 
 ---
 
@@ -126,76 +123,68 @@ O proxy intercepta chamadas OpenAI, calcula custo via pricing service, e salva n
 ```
 src/
   parsers/
-    claude.js        # Parser Claude Code JSONL
-    codex.js         # Parser Codex com delta tracking
-    gemini.js        # Parser Gemini CLI
-    opencode.js      # Parser OpenCode CLI
-    index.js         # Registry de parsers
+    claude.js              # Claude Code JSONL, detecta project via data.cwd
+    codex.js               # Codex delta tracking (cursor-based)
+    gemini.js              # Gemini CLI
+    opencode.js            # OpenCode CLI
+    index.js               # Registry
   services/
-    cache.js         # Warm/cold path cache
-    aggregator.js    # Agregação por dia/semana/mês
-    projects.js      # Agregação por projeto
-    normalizer.js    # Normalização de nomes de modelos
-    pricing.js       # Pricing via LiteLLM
-  types.js           # Modelos de dados e constantes
-  cli.js             # Entry point CLI
-server.js            # Proxy OpenAI + captura de uso
+    pricing.js             # Tabela MODELS + resolveModel + computeCost
+  types/
+    event.js               # createEvent, entryToEvent, toProjectFields
+  types.js                 # UsageEntry + constantes
+  event-log.js             # append, read, cursor, ingestAll, enrichCosts
+  aggregate.js             # aggregate (pura) + byProject
+  doctor.js                # tt doctor — auditoria
+  cli.js                   # Entry point
 ```
 
 ### Modelo de dados
 
-**UsageEntry** — uma interação individual:
+**UsageEvent** — único tipo persistido:
 ```js
 {
-  timestamp, source, provider, model,
-  input_tokens, output_tokens,
-  cache_read_tokens, cache_creation_tokens,
-  thinking_tokens, cost_usd,
-  project, dedup_key
+  id,                    // timestamp(base36) + 8 hex bytes
+  ts,                    // ISO 8601
+  source,                // claude|codex|gemini|opencode
+  model,
+  input_tokens,
+  output_tokens,
+  cache_read_tokens,
+  cache_write_tokens,
+  reasoning_tokens,
+  cost_usd,              // null = pricing indisponível, >0 = custo real
+  cost_source,           // native | computed | null
+  project_id,            // slug ASCII-safe estável entre máquinas
+  project_path,          // realpath local (usado por --project .)
+  session_id,
+  dedup_key              // idempotência no ingest
 }
 ```
 
-**DailySummary** — agregação diária:
-```js
-{
-  date: "YYYY-MM-DD",
-  total_input_tokens, total_output_tokens,
-  cache_read_tokens, cache_creation_tokens,
-  thinking_tokens, total_cost_usd,
-  models: { [name]: { input_tokens, output_tokens, cost_usd, count } }
-}
+**DailySummary** — computado on-demand por `aggregate()`, não persistido.
+
+### Storage
+
+```
+~/.token-tracker/
+  events/{source}/{YYYY-MM-DD}.jsonl    # source of truth
+  cursors/{source}.json                  # dedup + source-specific state
+  pricing.json                           # cache LiteLLM (TTL 1h)
 ```
 
----
-
-## Cache
-
-Salvo em `~/.token-tracker/cache/`:
-
-| Arquivo | Conteúdo |
-|---------|----------|
-| `claude_daily.json` | Resumos diários do Claude Code |
-| `codex_daily.json` | Resumos diários do Codex |
-| `gemini_daily.json` | Resumos diários do Gemini |
-| `opencode_daily.json` | Resumos diários do OpenCode |
-| `openai-proxy_daily.json` | Resumos do proxy OpenAI |
-
-**Warm path** — rápido: lê apenas arquivos modificados desde último cache, recomputa hoje, merge com passado.
-
-**Cold path** — completo: full parse de todos os arquivos, cria cache do zero.
-
-Versionamento automático — mudanças na lógica invalidam cache.
+Nada de `cache/{source}_daily.json`. Nada de warm/cold path. Nada de `mergeAllSummaries`.
 
 ---
 
 ## Pricing
 
-Custo calculado via [LiteLLM pricing table](https://github.com/BerriAI/litellm):
-
-- Cache local em `~/.token-tracker/pricing.json` (TTL 1h)
-- Lookup: exato → normalizado → fuzzy substring
-- Usa `costUSD` nativo do Claude quando disponível
-- Fallback: custo 0 (nunca falha)
+- Cache local em `~/.token-tracker/pricing.json` (TTL 1h, fonte: LiteLLM)
+- Tabela `MODELS` em [`src/services/pricing.js`](src/services/pricing.js) com aliases explícitos
+- `resolveModel(rawId)` → lookup direto + aliases + fallback (sem fuzzy substring)
+- Claude usa `costUSD` nativo quando disponível → `cost_source: "native"`
+- Eventos sem pricing: `cost_usd: null` + `cost_source: null` (nunca falha silencioso)
+- `has_missing_pricing: true` aparece em agregações com eventos incompletos
 
 ---
 
@@ -203,21 +192,15 @@ Custo calculado via [LiteLLM pricing table](https://github.com/BerriAI/litellm):
 
 | Fase | Status | Descrição |
 |------|--------|-----------|
-| 1 | ✅ | CLEANUP — estrutura de pastas |
-| 2 | ✅ | DATA MODEL — tipos e constantes |
-| 3 | ✅ | CLAUDE PARSER — streaming JSONL |
-| 4 | ✅ | CACHE — warm/cold path |
-| 5 | ✅ | CLI MÍNIMA — `tt`, `tt daily`, `tt weekly` |
-| 6 | ✅ | PROJETOS — `tt projects`, `tt --project .` |
-| 7 | ✅ | CODEX PARSER — delta tracking stateful |
-| 8 | ✅ | GEMINI + OPENCODE — parsers + registry |
-| 9 | ✅ | NORMALIZAÇÃO + PRICING — nomes + custos LiteLLM |
-| 10 | ✅ | PROXY UPGRADE — server.js integrado |
-| 11a | ⏳ | Consolidação multi-provider na CLI |
-| 11b | ⏳ | Watch mode |
-| 11c | ⏳ | API REST |
-| 11d | ⏳ | Dashboard web |
-| 11e | ⏳ | Alertas e budgets |
+| 1-11a | ✅ | Rebuild + multi-provider (parsers, CLI, proxy, pricing) |
+| 12-15 | ✅ | Data validation, pricing robustness, stability, project tracking |
+| **N1-N6** | ✅ | **Migração arquitetural: event log + aggregate puro + project-first** |
+| 16 | ⏳ | Performance guardrails + benchmarks |
+| 17 | ⏳ | Watch mode — `tt watch` com fs.watch() |
+| 18 | ⏳ | API REST — GET /api/summary, /api/daily, /api/projects |
+| 19 | ⏳ | Dashboard web |
+
+Histórico completo em [env/8_architecture_migration.md](env/8_architecture_migration.md) e [env/9_project_status_2026-04-19.md](env/9_project_status_2026-04-19.md).
 
 ---
 
@@ -230,20 +213,20 @@ node src/cli.js daily
 node src/cli.js daily --json
 node src/cli.js projects
 node src/cli.js --project .
+node src/cli.js doctor
 
-# Proxy
-node server.js
-
-# Testar parsers
-node -e "require('./src/parsers/claude').parseAll().then(e => console.log(e.length))"
-node -e "require('./src/parsers/codex').parseAll().then(e => console.log(e.length))"
+# Verificar parsers
 node -e "require('./src/parsers').getAll().map(p => console.log(p.name))"
 
-# Testar pricing
-node -e "require('./src/services/pricing').getCache().then(c => console.log(Object.keys(c.models).length, 'models'))"
+# Testar parser específico
+node -e "require('./src/parsers/claude').parseAll().then(e => console.log(e.length, 'entries'))"
 
-# Testar normalizer
-node -e "const n = require('./src/services/normalizer'); console.log(n.displayName(n.normalizeModelName('claude-sonnet-4-20250514')))"
+# Inspecionar event log
+ls ~/.token-tracker/events/claude/
+wc -l ~/.token-tracker/events/*/*.jsonl
+
+# Inspecionar cursor
+cat ~/.token-tracker/cursors/codex.json | jq '.source_specific.prev_totals_by_session | keys | length'
 ```
 
 ---

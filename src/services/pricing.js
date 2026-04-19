@@ -2,17 +2,55 @@
 
 const fs = require("fs");
 const path = require("path");
-const os = require("os");
 const https = require("https");
 const { TT_HOME } = require("../types");
-const { normalizeModelName } = require("./normalizer");
 
 const LITELLM_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const CACHE_PATH = path.join(TT_HOME, "pricing.json");
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const CACHE_TTL_MS = 60 * 60 * 1000;
 
-let _cache = null; // in-memory cache
+// Canonical model table. Key = litellm_key used in pricing lookup.
+const MODELS = {
+  "claude-opus-4-7": {
+    display: "Opus 4.7",
+    aliases: [],
+  },
+  "claude-opus-4-6": {
+    display: "Opus 4.6",
+    aliases: ["claude-opus-4-6-20260301", "claude-opus-4.6"],
+  },
+  "claude-sonnet-4-6": {
+    display: "Sonnet 4.6",
+    aliases: ["claude-sonnet-4-6-20261231"],
+  },
+  "claude-haiku-4-5": {
+    display: "Haiku 4.5",
+    aliases: ["claude-haiku-4-5-20251001", "claude-haiku-4.5"],
+  },
+  "deepseek/deepseek-v3.2-exp": {
+    display: "DeepSeek V3.2 Exp",
+    aliases: ["deepseek-v3.2-exp"],
+  },
+};
+
+// Reverse index: alias → canonical key
+const _aliasMap = new Map();
+for (const [canonical, info] of Object.entries(MODELS)) {
+  for (const alias of info.aliases) {
+    _aliasMap.set(alias, canonical);
+  }
+}
+
+function resolveModel(rawId) {
+  if (!rawId) return { display: rawId, canonical: rawId };
+  if (MODELS[rawId]) return { display: MODELS[rawId].display, canonical: rawId };
+  const via = _aliasMap.get(rawId);
+  if (via) return { display: MODELS[via].display, canonical: via };
+  return { display: rawId, canonical: rawId };
+}
+
+let _cache = null;
 
 function loadCacheFromDisk() {
   try {
@@ -30,7 +68,7 @@ function saveCacheToDisk(cache) {
     fs.mkdirSync(TT_HOME, { recursive: true });
     fs.writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2));
   } catch {
-    // ignore — pricing cache is best-effort
+    // ignore
   }
 }
 
@@ -57,26 +95,20 @@ function fetchPricing() {
 }
 
 async function getCache() {
-  // In-memory cache still valid
-  if (_cache && Date.now() - _cache.fetched_at < CACHE_TTL_MS) {
-    return _cache;
-  }
+  if (_cache && Date.now() - _cache.fetched_at < CACHE_TTL_MS) return _cache;
 
-  // Try disk cache
   const disk = loadCacheFromDisk();
   if (disk && Date.now() - disk.fetched_at < CACHE_TTL_MS) {
     _cache = disk;
     return _cache;
   }
 
-  // Fetch fresh
   try {
     const fresh = await fetchPricing();
     saveCacheToDisk(fresh);
     _cache = fresh;
     return _cache;
   } catch {
-    // Fallback: use expired disk cache if available
     if (disk) {
       _cache = disk;
       return _cache;
@@ -85,66 +117,38 @@ async function getCache() {
   }
 }
 
-function getPricingForModel(models, model) {
-  if (!model || !models) return null;
+async function computeCost(model, tokens) {
+  const { canonical } = resolveModel(model);
+  try {
+    const cache = await getCache();
+    if (!cache) return { cost_usd: null, cost_source: null };
 
-  // 1. Exact match
-  if (models[model]) return models[model];
-
-  // 2. Normalized match
-  const normalized = normalizeModelName(model);
-  if (normalized !== model && models[normalized]) return models[normalized];
-
-  // 3. Fuzzy substring (longest key wins, skip provider-prefixed keys)
-  const lower = normalized.toLowerCase();
-  let best = null;
-  let bestLen = 0;
-
-  for (const [key, pricing] of Object.entries(models)) {
-    if (key.includes("/")) continue; // skip azure/, openrouter/, etc.
-    const keyLower = key.toLowerCase();
-    if (keyLower && lower.includes(keyLower) && key.length > bestLen) {
-      best = pricing;
-      bestLen = key.length;
+    const pricing = cache.models[canonical];
+    if (!pricing) {
+      if (process.env.TT_DEBUG) {
+        console.error(`[pricing] unknown model: ${model} (canonical: ${canonical})`);
+      }
+      return { cost_usd: null, cost_source: null };
     }
-  }
 
-  return best;
+    const input = (tokens.input_tokens || 0) * (pricing.input_cost_per_token || 0);
+    const output = (tokens.output_tokens || 0) * (pricing.output_cost_per_token || 0);
+    const cacheRead = (tokens.cache_read_tokens || 0) * (pricing.cache_read_input_token_cost || 0);
+    const cacheWrite = (tokens.cache_write_tokens || 0) * (pricing.cache_creation_input_token_cost || 0);
+
+    return { cost_usd: input + output + cacheRead + cacheWrite, cost_source: "computed" };
+  } catch {
+    return { cost_usd: null, cost_source: null };
+  }
 }
 
-/**
- * Calculate cost for a UsageEntry.
- * - If entry.cost_usd is set: return it directly.
- * - Otherwise: look up pricing table and calculate.
- * - Fallback: return 0 (never throws).
- */
+// Legacy wrapper for cache.js (warm/cold path — removed in N4)
 async function getCost(entry) {
   if (entry.cost_usd !== null && entry.cost_usd !== undefined) {
     return entry.cost_usd;
   }
-
-  try {
-    const cache = await getCache();
-    if (!cache) return 0;
-
-    const pricing = getPricingForModel(cache.models, entry.model);
-    if (!pricing) return 0;
-
-    const input =
-      (entry.input_tokens || 0) * (pricing.input_cost_per_token || 0);
-    const output =
-      (entry.output_tokens || 0) * (pricing.output_cost_per_token || 0);
-    const cacheRead =
-      (entry.cache_read_tokens || 0) *
-      (pricing.cache_read_input_token_cost || 0);
-    const cacheCreation =
-      (entry.cache_creation_tokens || 0) *
-      (pricing.cache_creation_input_token_cost || 0);
-
-    return input + output + cacheRead + cacheCreation;
-  } catch {
-    return 0;
-  }
+  const result = await computeCost(entry.model, entry);
+  return result.cost_usd ?? 0;
 }
 
-module.exports = { getCost, getCache, CACHE_PATH };
+module.exports = { getCost, getCache, computeCost, resolveModel, CACHE_PATH, MODELS };
