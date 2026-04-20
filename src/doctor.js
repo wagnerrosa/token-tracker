@@ -6,15 +6,16 @@ const path = require("path");
 const { glob } = require("glob");
 const { TT_HOME } = require("./types");
 const { EVENTS_DIR, CURSORS_DIR } = require("./event-log");
-const { resolveModel, MODELS } = require("./services/pricing");
+const { resolveModel, MODELS, CACHE_PATH: PRICING_CACHE_PATH } = require("./services/pricing");
+const ui = require("./ui");
 
 async function doctor() {
-  const lines = [];
-  const warn = (msg) => lines.push(`⚠ ${msg}`);
-  const ok = (msg) => lines.push(`✓ ${msg}`);
-  const err = (msg) => lines.push(`✗ ${msg}`);
+  const sections = [];
+  const eventLog = { title: "event log", items: [] };
+  const pricingSection = { title: "pricing", items: [] };
+  const storage = { title: "storage", items: [] };
 
-  // 1. Event log: count events per source, last 7 days
+  // 1. Event log
   const since7 = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const sourceStats = new Map();
   let totalEvents = 0;
@@ -26,15 +27,18 @@ async function doctor() {
     const entries = await fsp.readdir(EVENTS_DIR, { withFileTypes: true });
     sources = entries.filter((e) => e.isDirectory()).map((e) => e.name);
   } catch {
-    err("Event log dir não encontrado: " + EVENTS_DIR);
+    eventLog.items.push({ level: "err", text: `directory not found: ${EVENTS_DIR}` });
   }
 
-  const unknownModels = new Map(); // model → {count, tokens}
+  const unknownModels = new Map();
+  const sourceMeta = new Map();
 
   for (const src of sources) {
     const pattern = path.join(EVENTS_DIR, src, "*.jsonl");
     const files = await glob(pattern, { nodir: true });
     let srcCount = 0;
+    const sessions = new Set();
+    let lastTs = null;
 
     for (const f of files) {
       const date = path.basename(f, ".jsonl");
@@ -52,6 +56,8 @@ async function doctor() {
         }
         srcCount++;
         totalEvents++;
+        if (ev.session_id) sessions.add(ev.session_id);
+        if (ev.ts && (!lastTs || ev.ts > lastTs)) lastTs = ev.ts;
 
         if (ev.cost_usd == null && (ev.input_tokens || ev.output_tokens)) {
           nullCostEvents++;
@@ -71,80 +77,108 @@ async function doctor() {
     }
 
     sourceStats.set(src, srcCount);
+    sourceMeta.set(src, { sessions: sessions.size, lastTs });
   }
 
-  const sourceSummary = [...sourceStats.entries()].map(([s, n]) => `${s}:${n}`).join(", ");
-  if (totalEvents > 0) {
-    ok(`Event log: ${totalEvents} eventos (últimos 7d) — ${sourceSummary}`);
-  } else {
-    warn("Event log: zero eventos nos últimos 7 dias");
+  for (const src of sources) {
+    const n = sourceStats.get(src) || 0;
+    const meta = sourceMeta.get(src) || {};
+    const level = n > 0 ? "ok" : "warn";
+    let detail = `${ui.fmtInt(n)} events`;
+    if (meta.sessions > 0) detail += ` · ${meta.sessions} sessions`;
+    if (meta.lastTs) detail += ` · last ${meta.lastTs.slice(0, 16).replace("T", " ")}`;
+    eventLog.items.push({
+      level,
+      text: `${ui.pad(src, 10)}  ${ui.pc.gray(detail)}`,
+    });
   }
 
   if (corruptLines > 0) {
-    warn(`${corruptLines} linha(s) inválida(s) no event log`);
-  } else {
-    ok("Linhas JSONL: todas válidas");
+    eventLog.items.push({ level: "warn", text: `${corruptLines} invalid JSONL line(s)` });
+  }
+
+  // 2. Pricing
+  try {
+    const raw = fs.readFileSync(PRICING_CACHE_PATH, "utf8");
+    const data = JSON.parse(raw);
+    const ageMs = Date.now() - (data.fetched_at || 0);
+    const ageMin = Math.round(ageMs / 60000);
+    const modelCount = data.models ? Object.keys(data.models).length : 0;
+    pricingSection.items.push({
+      level: "ok",
+      text: `cache LiteLLM  ${ui.pc.gray(`updated ${ageMin}min ago · ${modelCount} models`)}`,
+    });
+  } catch {
+    pricingSection.items.push({ level: "warn", text: "cache LiteLLM  not found" });
+  }
+
+  if (unknownModels.size > 0) {
+    for (const [model, { count }] of unknownModels.entries()) {
+      pricingSection.items.push({
+        level: "warn",
+        text: `${model} ${ui.pc.gray(`· invisible cost in ${count} event${count === 1 ? "" : "s"}`)}`,
+      });
+    }
+  } else if (totalEvents > 0) {
+    pricingSection.items.push({ level: "ok", text: "all models have pricing" });
   }
 
   if (nullCostEvents > 0) {
-    warn(`${nullCostEvents} eventos sem pricing (cost_source=null, tokens>0)`);
-  } else {
-    ok("Pricing: todos eventos com custo calculado");
+    pricingSection.items.push({
+      level: "warn",
+      text: `${nullCostEvents} event${nullCostEvents === 1 ? "" : "s"} without cost`,
+    });
   }
 
-  // 2. Cursores
-  let cursorOk = 0;
+  // 3. Storage
+  try {
+    const entries = await fsp.readdir(TT_HOME, { withFileTypes: true, recursive: true });
+    let fileCount = 0;
+    let totalBytes = 0;
+    for (const e of entries) {
+      if (e.isFile()) {
+        fileCount++;
+        try {
+          const full = path.join(e.path || TT_HOME, e.name);
+          const st = await fsp.stat(full);
+          totalBytes += st.size;
+        } catch { /* ignore */ }
+      }
+    }
+    const mb = (totalBytes / 1024 / 1024).toFixed(1);
+    storage.items.push({
+      level: "ok",
+      text: `~/.token-tracker  ${ui.pc.gray(`${fileCount} files · ${mb} MB`)}`,
+    });
+  } catch {
+    storage.items.push({ level: "warn", text: "~/.token-tracker  inaccessible" });
+  }
+
+  const oldCache = path.join(TT_HOME, "cache");
+  if (fs.existsSync(oldCache)) {
+    storage.items.push({
+      level: "warn",
+      text: `legacy cache at ${oldCache} (run: rm -rf ${oldCache})`,
+    });
+  }
+
+  // Cursors
   let cursorBad = 0;
   for (const src of sources) {
     const p = path.join(CURSORS_DIR, `${src}.json`);
     try {
       const raw = await fsp.readFile(p, "utf8");
       JSON.parse(raw);
-      cursorOk++;
     } catch {
       cursorBad++;
-      warn(`Cursor inválido ou ausente: ${src}`);
     }
   }
-  if (cursorBad === 0) {
-    ok(`Cursores: ${cursorOk}/${sources.length} válidos`);
+  if (cursorBad > 0) {
+    storage.items.push({ level: "warn", text: `${cursorBad} invalid cursor(s)` });
   }
 
-  // 3. Modelos sem pricing
-  if (unknownModels.size > 0) {
-    for (const [model, { count, tokens }] of unknownModels.entries()) {
-      warn(`Modelo sem pricing: ${model} (${count} eventos, ${(tokens / 1000).toFixed(1)}k tokens)`);
-    }
-  } else {
-    ok("Modelos: todos resolvidos em MODELS");
-  }
-
-  // 4. Cache antigo
-  const oldCache = path.join(TT_HOME, "cache");
-  if (fs.existsSync(oldCache)) {
-    warn(`Cache antigo detectado: ${oldCache}\n  Pode apagar com: rm -rf ${oldCache}`);
-  } else {
-    ok("Cache antigo: não encontrado");
-  }
-
-  // 5. Codex prev_totals
-  const codexCursor = path.join(CURSORS_DIR, "codex.json");
-  try {
-    const raw = await fsp.readFile(codexCursor, "utf8");
-    const c = JSON.parse(raw);
-    const sessions = Object.keys((c.source_specific || {}).prev_totals_by_session || {}).length;
-    if (sessions > 0) {
-      ok(`Codex: ${sessions} sessões com prev_totals persistidos`);
-    } else {
-      warn("Codex: nenhuma sessão em prev_totals_by_session");
-    }
-  } catch {
-    warn("Codex: cursor não encontrado");
-  }
-
-  console.log("\ntt doctor\n");
-  for (const l of lines) console.log(l);
-  console.log();
+  sections.push(eventLog, pricingSection, storage);
+  ui.renderDoctor({ sections });
 }
 
 module.exports = { doctor };

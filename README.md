@@ -1,12 +1,30 @@
 # TokenTracker (TT)
 
-**Rastreia uso de tokens de LLMs por projeto e usuário.**
+**Descubra quanto cada projeto realmente custa em uso de IA.**
+
+TokenTracker é uma ferramenta CLI que transforma logs locais de LLMs em insights claros de custo, uso e consumo por projeto — sem depender de serviços externos.
 
 Observabilidade local-first para consumo de IA. Sem banco de dados, sem serviços externos. Event log append-only como fonte de verdade.
 
 ---
 
 ## Por quê
+
+\n## O que você descobre
+
+- Qual projeto está gerando mais custo
+- Qual modelo está dominando seu uso
+- Quanto você gastou hoje / semana
+- Se há eventos sem pricing (custo invisível)
+
+## Diferenciais
+
+- **Project-first**: custo por projeto, não só total
+- **Event log append-only**: histórico completo, sem perda
+- **Sem dependências externas**: tudo local
+- **Agregação sob demanda**: sem cache inconsistente
+- **Pricing determinístico**: sem heurísticas imprevisíveis
+- **Output semântico**: cores apenas onde carregam significado (cyan = identidade, green = OK, yellow = aviso, red = erro)
 
 Ferramentas de IA (Claude Code, Codex, Gemini, OpenCode) registram dados de uso localmente, mas esses dados:
 - São apagados após 30 dias
@@ -43,31 +61,62 @@ tt
 ```
 
 ```
-Hoje (2026-04-19)
+  ◆ tt  seg 20 abr  ·····················································  $1.10
 
-  Input:   543
-  Output:  87.2k
-  Cache ↑: 20.3M
-  Custo:   $11.0346
+  input           774
+  output        13.1k
+  cache hit    804.3k
+  cache write   58.6k
 
-  Modelos:
-    Opus 4.7                             $5.9231  (86x)
-    Sonnet 4.6                           $4.1150  (130x)
-    Haiku 4.5                            $0.9965  (67x)
+  Opus 4.7  $1.10  100%
+
+  → token-tracker é o projeto mais caro hoje  $1.10
 ```
 
 ### Últimos 7 dias / semanas
 
 ```bash
 tt daily
-tt weekly
+```
+
+```
+  últimos 7 dias
+
+  hoje     $1.18  20 ev
+  dom 19  $27.16  609 ev
+  sex 17  $32.43  804 ev
+  qui 16  $14.73  314 ev
+  qua 15  $10.20  342 ev
+  ter 14  $19.70  286 ev
+  seg 13  $26.64  792 ev
+
+  total  $132.04
+  média  $18.86
+```
+
+```bash
+tt weekly          # últimas 4 semanas
 tt daily --json    # saída JSON para scripts
 ```
 
 ### Projetos
 
 ```bash
-tt projects              # ranking de projetos por custo
+tt projects
+```
+
+```
+  projetos · últimos 7 dias
+
+  1  planton-design-system  $57.16  43%  ▰▰▱▱▱
+  2  token-tracker          $31.13  24%  ▰▱▱▱▱ ·
+  3  genius-dados           $14.88  11%  ▰▱▱▱▱
+  4  planton-vault          $13.38  10%  ▰▱▱▱▱
+
+  4 projetos · $132.04 total
+```
+
+```bash
 tt --project .           # filtra pelo projeto do cwd (via realpath)
 tt daily --project .     # combinável com subcomandos
 ```
@@ -75,8 +124,31 @@ tt daily --project .     # combinável com subcomandos
 ### Auditoria
 
 ```bash
-tt doctor                # reporta estado do event log, cursores, modelos sem pricing
+tt doctor
 ```
+
+```
+  event log
+  ✓  claude      3.263 eventos · último 2026-04-20 03:05
+  ✓  codex       14 eventos · 1 sessões · último 2026-04-13 00:03
+
+  pricing
+  ✓  cache LiteLLM  atualizado há 0min · 2672 modelos
+  !  gpt-5.4 · custo invisível em 14 eventos
+  !  1317 eventos sem custo calculado
+
+  storage
+  ✓  ~/.token-tracker  55 arquivos · 1.2 MB
+  !  cache antigo em /Users/wagnerrosa/.token-tracker/cache (rode: rm -rf ...)
+```
+
+### Ajuda
+
+```bash
+tt --help
+```
+
+Mostra providers detectados, comandos e dicas na primeira execução.
 
 ---
 
@@ -94,6 +166,8 @@ Todos os providers são agregados em uma única visão unificada.
 ---
 
 ## Como funciona
+
+TokenTracker funciona em três etapas simples:
 
 ```
 ~/.claude/...            ─┐
@@ -120,6 +194,8 @@ Todos os providers são agregados em uma única visão unificada.
 
 ## Arquitetura
 
+> Se você quer apenas usar, pode pular esta seção.
+
 ```
 src/
   parsers/
@@ -136,6 +212,7 @@ src/
   event-log.js             # append, read, cursor, ingestAll, enrichCosts
   aggregate.js             # aggregate (pura) + byProject
   doctor.js                # tt doctor — auditoria
+  ui.js                    # Formatters + renderers com picocolors
   cli.js                   # Entry point
 ```
 
