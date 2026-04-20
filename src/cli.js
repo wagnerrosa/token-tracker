@@ -100,7 +100,7 @@ async function main() {
     } else if (last7.length === 0) {
       ui.renderEmpty("no data");
     } else {
-      ui.renderDaily(last7, { title: "last 7 days" });
+      ui.renderDaily(last7, { title: "Daily usage", periodLabel: "last 7 days" });
     }
     return;
   }
@@ -112,7 +112,7 @@ async function main() {
     } else if (weekly.length === 0) {
       ui.renderEmpty("no data");
     } else {
-      ui.renderDaily(weekly, { title: "last 4 weeks" });
+      ui.renderDaily(weekly, { title: "Weekly usage", periodLabel: "last 4 weeks" });
     }
     return;
   }

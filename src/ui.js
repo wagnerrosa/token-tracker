@@ -110,15 +110,38 @@ function detectedProviders() {
 
 // ───────── renderers ─────────
 
-function renderHeader(cost, dateStr = todayStr()) {
-  console.log(`${pc.white("tt")} ${pc.cyan("◆")}  ${pc.gray(fmtDateLong(dateStr))}`);
+function renderHeaderToday(summary) {
+  const dateStr = todayStr();
+  const cost = summary ? fmtCost(summary.total_cost_usd) : fmtCost(0);
+  console.log(`${pc.white("tt")}  ${pc.white(cost)} ${pc.gray("today")}`);
+  console.log(`    ${pc.gray(fmtDateLong(dateStr))}`);
   console.log();
-  console.log(pc.white(fmtCost(cost)));
+}
+
+function renderHeaderProjects(projects, periodLabel) {
+  const total = projects.reduce((s, p) => s + p.total_cost_usd, 0);
+  const title = "Projects";
+  const indent = " ".repeat(title.length);
+  console.log(`${pc.white(title)}  ${pc.white(fmtCost(total))}`);
+  console.log(`${indent}  ${pc.gray(periodLabel)}`);
+  console.log();
+}
+
+function renderHeaderPeriod(summaries, title, periodLabel) {
+  const total = summaries.reduce((s, x) => s + x.total_cost_usd, 0);
+  const indent = " ".repeat(title.length);
+  console.log(`${pc.white(title)}  ${pc.white(fmtCost(total))}`);
+  console.log(`${indent}  ${pc.gray(periodLabel)}`);
+  console.log();
+}
+
+function renderHeaderDoctor() {
+  console.log(pc.white("System health"));
   console.log();
 }
 
 function renderToday(summary, { projectsByCost, missingCount, projectFilter }) {
-  renderHeader(summary.total_cost_usd);
+  renderHeaderToday(summary);
 
   // Tokens
   const totalTokens = summary.total_input_tokens + summary.total_output_tokens;
@@ -188,8 +211,7 @@ function renderToday(summary, { projectsByCost, missingCount, projectFilter }) {
 }
 
 function renderProjects(projects, { cwd, periodLabel = "last 7 days" } = {}) {
-  console.log(`tt ${pc.cyan("◆")}  ${pc.gray(periodLabel)}`);
-  console.log();
+  renderHeaderProjects(projects, periodLabel);
 
   const total = projects.reduce((s, p) => s + p.total_cost_usd, 0) || 1;
   const names = projects.map((p) => p.name);
@@ -212,9 +234,8 @@ function renderProjects(projects, { cwd, periodLabel = "last 7 days" } = {}) {
   console.log(`  ${pc.gray(`${projects.length} project${projects.length === 1 ? "" : "s"} · ${fmtCost(total)} total`)}`);
 }
 
-function renderDaily(summaries, { title = "last 7 days" } = {}) {
-  console.log(`tt ${pc.cyan("◆")}  ${pc.gray(title)}`);
-  console.log();
+function renderDaily(summaries, { title = "Daily usage", periodLabel = "last 7 days" } = {}) {
+  renderHeaderPeriod(summaries, title, periodLabel);
 
   const today = todayStr();
   const rows = summaries.map((s) => {
@@ -249,7 +270,7 @@ function renderDaily(summaries, { title = "last 7 days" } = {}) {
 }
 
 function renderDoctor(report) {
-  console.log();
+  renderHeaderDoctor();
   for (const section of report.sections) {
     console.log(`  ${pc.gray(section.title)}`);
     for (const item of section.items) {
@@ -332,7 +353,6 @@ module.exports = {
   loadConfig,
   saveConfig,
   detectedProviders,
-  renderHeader,
   renderToday,
   renderProjects,
   renderDaily,
