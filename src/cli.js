@@ -164,10 +164,12 @@ async function main() {
   // byProject for today's "→ mais caro hoje"
   const todayEvents = scoped.filter((e) => localDate(e.ts) === todayDate);
   const projectsByCost = byProject(todayEvents);
+  const usersByCost = byUser(todayEvents);
   const missingCount = countMissingPricing(todayEvents);
 
   ui.renderToday(todaySummary, {
     projectsByCost,
+    usersByCost,
     missingCount,
     projectFilter: projectFilterResolved,
   });

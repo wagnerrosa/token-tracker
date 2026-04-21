@@ -140,7 +140,7 @@ function renderHeaderDoctor() {
   console.log();
 }
 
-function renderToday(summary, { projectsByCost, missingCount, projectFilter }) {
+function renderToday(summary, { projectsByCost, usersByCost, missingCount, projectFilter }) {
   renderHeaderToday(summary);
 
   // Tokens
@@ -195,15 +195,46 @@ function renderToday(summary, { projectsByCost, missingCount, projectFilter }) {
     }
   }
 
+  // Users (only when ≥2 distinct users — keeps default output clean for solo use)
+  const multiUser = usersByCost && usersByCost.length >= 2;
+  if (multiUser) {
+    console.log();
+    console.log(pc.gray("Users"));
+    const totalUserCost = usersByCost.reduce((s, u) => s + u.total_cost_usd, 0) || 1;
+    const names = usersByCost.map((u) => u.user_id || "unknown");
+    const nameW = Math.max(...names.map((n) => n.length));
+    const costs = usersByCost.map((u) => fmtCost(u.total_cost_usd));
+    const costW = Math.max(...costs.map((c) => c.length));
+
+    for (let i = 0; i < usersByCost.length; i++) {
+      const u = usersByCost[i];
+      const pctNum = (u.total_cost_usd / totalUserCost) * 100;
+      const pct = padLeft(fmtPct(pctNum), 4);
+      const b = bar(pctNum);
+      if (i === 0) {
+        console.log(`  ${pc.white(pad(names[i], nameW))}  ${pc.white(padLeft(costs[i], costW))}  ${pct}   ${pc.white(b)}`);
+      } else {
+        console.log(`  ${pc.gray(pad(names[i], nameW))}  ${padLeft(costs[i], costW)}  ${pct}   ${pc.white(b)}`);
+      }
+    }
+  }
+
   // Insights
-  const hasInsight = (!projectFilter && projectsByCost?.length > 0) || missingCount > 0;
+  const topProjectInsight = !projectFilter && projectsByCost && projectsByCost.length > 0;
+  const topUserInsight = multiUser;
+  const hasInsight = topProjectInsight || topUserInsight || missingCount > 0;
   if (hasInsight) {
     console.log();
     console.log(pc.gray("Insights"));
   }
-  if (!projectFilter && projectsByCost && projectsByCost.length > 0) {
+  if (topProjectInsight) {
     const top = projectsByCost[0];
     console.log(`  ${pc.gray("→")} ${top.name}  ${fmtCost(top.total_cost_usd)} ${pc.gray("(top project)")}`);
+  }
+  if (topUserInsight) {
+    const top = usersByCost[0];
+    const label = top.user_id || "unknown";
+    console.log(`  ${pc.gray("→")} ${label}  ${fmtCost(top.total_cost_usd)} ${pc.gray("(top user)")}`);
   }
   if (missingCount > 0) {
     console.log(`  ${pc.yellow(`⚠ ${missingCount} model${missingCount === 1 ? "" : "s"} missing pricing — run tt doctor`)}`);
