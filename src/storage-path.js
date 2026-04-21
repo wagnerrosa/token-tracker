@@ -6,6 +6,17 @@ const path = require("path");
 
 let _cache = null;
 
+function getGlobalHome() {
+  return path.join(os.homedir(), ".token-tracker");
+}
+
+function getRepoRoot() {
+  // only returns a repo root if storage is in repo mode
+  const r = resolve();
+  if (r.mode !== "repo") return null;
+  return path.dirname(r.home);
+}
+
 function findGitRoot(dir) {
   let current = dir;
   while (true) {
@@ -60,4 +71,4 @@ function _resetCache() {
   _cache = null;
 }
 
-module.exports = { getTTHome, getStorageMode, getEventsDir, getCursorsDir, _resetCache };
+module.exports = { getTTHome, getStorageMode, getEventsDir, getCursorsDir, getGlobalHome, getRepoRoot, _resetCache };

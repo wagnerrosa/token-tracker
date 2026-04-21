@@ -4,7 +4,7 @@ const fs = require("fs");
 const fsp = require("fs/promises");
 const path = require("path");
 const { glob } = require("glob");
-const { getEventsDir, getCursorsDir } = require("./storage-path");
+const { getEventsDir, getCursorsDir, getGlobalHome, getRepoRoot } = require("./storage-path");
 
 function eventDate(ts) {
   return new Date(ts).toISOString().slice(0, 10);
@@ -18,7 +18,7 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
-async function append(events) {
+async function appendToDir(events, eventsDir) {
   if (!events || events.length === 0) return;
 
   const groups = new Map();
@@ -30,10 +30,14 @@ async function append(events) {
   }
 
   for (const { source, date, lines } of groups.values()) {
-    const file = eventFile(source, date);
+    const file = path.join(eventsDir, source, `${date}.jsonl`);
     await fsp.mkdir(path.dirname(file), { recursive: true });
     await fsp.appendFile(file, lines.join("\n") + "\n");
   }
+}
+
+async function append(events) {
+  return appendToDir(events, getEventsDir());
 }
 
 async function read({ source, since, until, project } = {}) {
@@ -165,6 +169,22 @@ async function enrichCosts(events) {
   return events;
 }
 
+function resolveRepoRootReal() {
+  const raw = getRepoRoot();
+  if (!raw) return null;
+  try {
+    return fs.realpathSync(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function belongsToRepo(projectPath, repoRootReal) {
+  if (!projectPath) return false;
+  if (projectPath === repoRootReal) return true;
+  return projectPath.startsWith(repoRootReal + path.sep);
+}
+
 async function ingestAll() {
   const { getAll } = require("./parsers");
   const { entryToEvent } = require("./types/event");
@@ -173,6 +193,10 @@ async function ingestAll() {
 
   const user_id = getUserId();
   const user_name = getUserName();
+
+  const repoRoot = resolveRepoRootReal();
+  const repoMode = repoRoot !== null;
+  const globalEventsDir = path.join(getGlobalHome(), "events");
 
   for (const parser of getAll()) {
     const cursor = await loadCursor(parser.name, user_id);
@@ -189,7 +213,9 @@ async function ingestAll() {
       entries = await parser.parseAll();
     }
 
-    const newEvents = [];
+    const repoEvents = [];
+    const globalEvents = [];
+
     for (const entry of entries) {
       if (entry.cost_usd == null) {
         const { cost_usd, cost_source } = await computeCost(entry.model, {
@@ -208,15 +234,33 @@ async function ingestAll() {
       if (!ev.dedup_key) continue;
       if (seen.has(ev.dedup_key)) continue;
       seen.add(ev.dedup_key);
-      newEvents.push(ev);
+
+      if (repoMode) {
+        if (belongsToRepo(ev.project_path, repoRoot)) {
+          repoEvents.push(ev);
+        } else {
+          // event outside current repo — double-write to global storage
+          globalEvents.push(ev);
+        }
+      } else {
+        repoEvents.push(ev);
+      }
     }
 
-    if (newEvents.length > 0) {
+    if (repoEvents.length > 0) {
       try {
-        await append(newEvents);
+        await append(repoEvents);
       } catch (err) {
         if (process.env.TT_DEBUG) console.error(`[event-log] append failed:`, err);
         continue;
+      }
+    }
+
+    if (globalEvents.length > 0) {
+      try {
+        await appendToDir(globalEvents, globalEventsDir);
+      } catch (err) {
+        if (process.env.TT_DEBUG) console.error(`[event-log] global append failed:`, err);
       }
     }
 
@@ -231,12 +275,14 @@ async function ingestAll() {
 
 module.exports = {
   append,
+  appendToDir,
   read,
   loadCursor,
   saveCursor,
   recoverSeenKeys,
   ingestAll,
   enrichCosts,
+  belongsToRepo,
   get EVENTS_DIR() { return getEventsDir(); },
   get CURSORS_DIR() { return getCursorsDir(); },
 };
