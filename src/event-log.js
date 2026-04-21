@@ -165,6 +165,10 @@ async function ingestAll() {
   const { getAll } = require("./parsers");
   const { entryToEvent } = require("./types/event");
   const { computeCost } = require("./services/pricing");
+  const { getUserId, getUserName } = require("./git-user");
+
+  const user_id = getUserId();
+  const user_name = getUserName();
 
   for (const parser of getAll()) {
     const cursor = await loadCursor(parser.name);
@@ -193,6 +197,8 @@ async function ingestAll() {
         entry.cost_usd = cost_usd;
         entry._cost_source = cost_source;
       }
+      if (entry.user_id == null) entry.user_id = user_id;
+      if (entry.user_name == null) entry.user_name = user_name;
       const ev = entryToEvent(entry, { source: parser.name });
       if (entry._cost_source) ev.cost_source = entry._cost_source;
       if (!ev.dedup_key) continue;

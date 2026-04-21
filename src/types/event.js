@@ -37,6 +37,8 @@ function createEvent(data = {}) {
     project_id: data.project_id ?? null,
     project_path: data.project_path ?? null,
     session_id: data.session_id ?? null,
+    user_id: data.user_id ?? null,
+    user_name: data.user_name ?? null,
     dedup_key: data.dedup_key || null,
   };
 }
@@ -50,9 +52,11 @@ function entryToEvent(entry, { source } = {}) {
     cost_source = src === "claude" && entry.cost_usd > 0 ? "native" : "computed";
   }
 
-  const dedup_key =
-    entry.dedup_key ||
+  const userId = entry.user_id ?? null;
+  const baseKey = entry.dedup_key ||
     `${ts}:${src}:${entry.model || ""}:${entry.input_tokens || 0}:${entry.output_tokens || 0}`;
+  // include user_id in dedup_key only when present — preserves legacy key for old events
+  const dedup_key = userId ? `${baseKey}:${userId}` : baseKey;
 
   return createEvent({
     ts,
@@ -68,6 +72,8 @@ function entryToEvent(entry, { source } = {}) {
     project_id: entry.project_id ?? null,
     project_path: entry.project_path ?? null,
     session_id: entry.session_id || null,
+    user_id: userId,
+    user_name: entry.user_name ?? null,
     dedup_key,
   });
 }
