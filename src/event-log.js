@@ -5,6 +5,7 @@ const fsp = require("fs/promises");
 const path = require("path");
 const { glob } = require("glob");
 const { getEventsDir, getCursorsDir, getGlobalHome, getRepoRoot } = require("./storage-path");
+const { listRepos, registerRepo } = require("./repo-registry");
 
 function eventDate(ts) {
   return new Date(ts).toISOString().slice(0, 10);
@@ -83,12 +84,36 @@ async function collectEventFiles(eventsDir, source) {
   return out;
 }
 
-async function read({ source, since, until, project } = {}) {
-  const sources = source ? [source] : await listSources();
+async function listSourcesFromDir(eventsDir) {
+  try {
+    const entries = await fsp.readdir(eventsDir, { withFileTypes: true });
+    const sources = new Set(
+      entries
+        .filter((e) => e.isDirectory() && e.name !== "_compact")
+        .map((e) => e.name),
+    );
+    // Also include sources that only exist in _compact/ archive
+    try {
+      const compactEntries = await fsp.readdir(
+        path.join(eventsDir, "_compact"),
+        { withFileTypes: true },
+      );
+      for (const e of compactEntries) {
+        if (e.isDirectory()) sources.add(e.name);
+      }
+    } catch { /* no compact dir */ }
+    return [...sources];
+  } catch {
+    return [];
+  }
+}
+
+async function readFromDir(eventsDir, { source, since, until, project } = {}) {
+  const sources = source ? [source] : await listSourcesFromDir(eventsDir);
   const results = [];
 
   for (const src of sources) {
-    const files = await collectEventFiles(getEventsDir(), src);
+    const files = await collectEventFiles(eventsDir, src);
 
     for (const f of files) {
       const date = fileDateFromPath(f);
@@ -124,28 +149,52 @@ async function read({ source, since, until, project } = {}) {
   return results;
 }
 
-async function listSources() {
-  try {
-    const entries = await fsp.readdir(getEventsDir(), { withFileTypes: true });
-    const sources = new Set(
-      entries
-        .filter((e) => e.isDirectory() && e.name !== "_compact")
-        .map((e) => e.name),
-    );
-    // Also include sources that only exist in _compact/ archive
-    try {
-      const compactEntries = await fsp.readdir(
-        path.join(getEventsDir(), "_compact"),
-        { withFileTypes: true },
-      );
-      for (const e of compactEntries) {
-        if (e.isDirectory()) sources.add(e.name);
-      }
-    } catch { /* no compact dir */ }
-    return [...sources];
-  } catch {
-    return [];
+async function read(opts = {}) {
+  return readFromDir(getEventsDir(), opts);
+}
+
+function dedupMerge(events) {
+  const out = [];
+  const seen = new Set();
+  for (const ev of events) {
+    const k = ev.dedup_key || [
+      ev.source || "",
+      ev.ts || "",
+      ev.model || "",
+      ev.input_tokens || 0,
+      ev.output_tokens || 0,
+      ev.user_id || "",
+      ev.project_path || "",
+    ].join(":");
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(ev);
   }
+  return out;
+}
+
+async function readAllRepos(opts = {}) {
+  const dirs = new Set();
+  dirs.add(getEventsDir());
+  dirs.add(path.join(getGlobalHome(), "events"));
+
+  const repos = await listRepos();
+  for (const repo of repos) {
+    if (!repo || !repo.path) continue;
+    dirs.add(path.join(repo.path, ".token-tracker", "events"));
+  }
+
+  const merged = [];
+  for (const eventsDir of dirs) {
+    const items = await readFromDir(eventsDir, opts);
+    merged.push(...items);
+  }
+
+  return dedupMerge(merged);
+}
+
+async function listSources() {
+  return listSourcesFromDir(getEventsDir());
 }
 
 function cursorPath(source, userId) {
@@ -337,12 +386,22 @@ async function ingestAll() {
       if (process.env.TT_DEBUG) console.error(`[event-log] cursor save failed:`, err);
     }
   }
+
+  if (repoMode) {
+    try {
+      await registerRepo(repoRoot);
+    } catch (err) {
+      if (process.env.TT_DEBUG) console.error(`[event-log] repo registry failed:`, err);
+    }
+  }
 }
 
 module.exports = {
   append,
   appendToDir,
   read,
+  readAllRepos,
+  readFromDir,
   loadCursor,
   saveCursor,
   recoverSeenKeys,

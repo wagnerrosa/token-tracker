@@ -5,7 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const { aggregate, byProject, byUser, localDate } = require("./aggregate");
 const { resolveModel, MODELS } = require("./services/pricing");
-const { read: readEvents, ingestAll, enrichCosts } = require("./event-log");
+const { read: readEvents, readAllRepos, ingestAll, enrichCosts } = require("./event-log");
 const { doctor } = require("./doctor");
 const { compactBefore } = require("./compact");
 const { getTTHome } = require("./storage-path");
@@ -21,6 +21,7 @@ const userFlag = rest.includes("--user") ? rest[rest.indexOf("--user") + 1] : nu
 const beforeFlag = rest.includes("--before") ? rest[rest.indexOf("--before") + 1] : null;
 const dryRunFlag = rest.includes("--dry-run");
 const yesFlag = rest.includes("--yes") || rest.includes("-y");
+const localFlag = rest.includes("--local");
 if (rest.length > 0 && !rest[0].startsWith("-")) {
   cmd = rest[0];
 }
@@ -119,7 +120,7 @@ async function main() {
     return;
   }
 
-  const isFirstRun = ui.maybeOnboard();
+  const isFirstRun = jsonFlag ? false : ui.maybeOnboard();
 
   warnOldCache();
   await ingestAll();
@@ -154,8 +155,10 @@ async function main() {
 
   // projects command
   if (cmd === "projects") {
+    const projectEvents = localFlag ? events : await readAllRepos();
+    await enrichCosts(projectEvents);
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const projects = byProject(events, { since });
+    const projects = byProject(projectEvents, { since });
     if (jsonFlag) {
       console.log(JSON.stringify(projects, null, 2));
       return;

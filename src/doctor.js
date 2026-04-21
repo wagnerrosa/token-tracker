@@ -5,6 +5,8 @@ const fsp = require("fs/promises");
 const path = require("path");
 const { glob } = require("glob");
 const { getTTHome, getStorageMode } = require("./storage-path");
+const { getUserId } = require("./git-user");
+const { listRepos, getRepoStaleness } = require("./repo-registry");
 const { EVENTS_DIR, CURSORS_DIR } = require("./event-log");
 const { resolveModel, MODELS, CACHE_PATH: PRICING_CACHE_PATH } = require("./services/pricing");
 const ui = require("./ui");
@@ -34,14 +36,19 @@ async function doctor() {
   const sourceMeta = new Map();
 
   for (const src of sources) {
-    const pattern = path.join(EVENTS_DIR, src, "*.jsonl");
-    const files = await glob(pattern, { nodir: true });
+    const patternB = path.join(EVENTS_DIR, src, "*.jsonl");
+    const patternA = path.join(EVENTS_DIR, src, "*", "*.jsonl");
+    const filesB = await glob(patternB, { nodir: true });
+    const filesA = await glob(patternA, { nodir: true });
+    const files = [...filesB, ...filesA];
     let srcCount = 0;
     const sessions = new Set();
     let lastTs = null;
 
     for (const f of files) {
-      const date = path.basename(f, ".jsonl");
+      // Layout B: basename = "{date}.jsonl". Layout A: parent dir = date.
+      const parent = path.basename(path.dirname(f));
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(parent) ? parent : path.basename(f, ".jsonl");
       if (date < since7) continue;
 
       let raw;
@@ -133,10 +140,39 @@ async function doctor() {
   // 3. Storage
   const ttHome = getTTHome();
   const storageMode = getStorageMode();
+  const eventLayout = process.env.TT_EVENT_LAYOUT === "B" ? "B" : "A";
   storage.items.push({
     level: "ok",
-    text: `mode ${ui.pc.gray(storageMode)} · path ${ttHome}`,
+    text: `mode ${ui.pc.gray(storageMode)} · layout ${ui.pc.gray(eventLayout)} · path ${ttHome}`,
   });
+
+  const userIdStrategy = process.env.TT_USER_ID_STRATEGY || "email";
+  const resolvedUserId = getUserId();
+  storage.items.push({
+    level: "ok",
+    text: `user_id strategy ${ui.pc.gray(userIdStrategy)} · resolved ${ui.pc.gray(resolvedUserId)}`,
+  });
+
+  try {
+    const repos = await listRepos();
+    const stale = [];
+    let missing = 0;
+    let aged = 0;
+    for (const repo of repos) {
+      const st = getRepoStaleness(repo, { maxAgeDays: 30 });
+      if (!st.stale) continue;
+      stale.push({ ...repo, ...st });
+      if (!st.exists) missing++;
+      else aged++;
+    }
+    const level = stale.length > 0 ? "warn" : "ok";
+    storage.items.push({
+      level,
+      text: `repo registry ${ui.pc.gray(`${repos.length} total · ${stale.length} stale (missing ${missing}, old ${aged})`)}`,
+    });
+  } catch {
+    storage.items.push({ level: "warn", text: "repo registry unavailable" });
+  }
 
   try {
     const entries = await fsp.readdir(ttHome, { withFileTypes: true, recursive: true });

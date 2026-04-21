@@ -64,6 +64,9 @@ tt weekly
 # Top projects in the last 7 days
 tt projects
 
+# Top projects only in the current repo
+tt projects --local
+
 # Scope to current working directory project
 tt --project .
 
@@ -81,9 +84,16 @@ tt doctor
 
 ## Storage Mode
 
-By default, TokenTracker stores data in `~/.token-tracker` (global, shared across all projects on your machine).
+TokenTracker resolves storage lazily with this precedence:
 
-Starting with Phase 2, you can also store data **per-repository** in `./.token-tracker`, enabling version control and team collaboration:
+1. `TT_HOME`
+2. `TT_STORAGE=global`
+3. current Git repo: `./.token-tracker`
+4. fallback global: `~/.token-tracker`
+
+In practice, this means:
+- inside a Git repo, default storage is `./.token-tracker`
+- outside a Git repo, default storage is `~/.token-tracker`
 
 ### Per-repository storage
 
@@ -93,6 +103,25 @@ When you run `tt` inside a Git repository, TokenTracker automatically detects it
 - Events are versioned alongside your code
 - Team members can consolidate usage costs in a single repository view
 - No cross-project event leakage: events scoped to their origin project are isolated
+- `tt projects` can still recover a solo developer's cross-repo view through a repo registry in `~/.token-tracker/repos.json`
+
+### Cross-repo projects view
+
+`tt projects` is the only command that reads across repositories.
+
+- It merges events from the current repo, the global store, and all repos registered in `~/.token-tracker/repos.json`
+- Repos are registered automatically whenever `tt` ingests events inside a repo
+- Duplicates are removed by `dedup_key` when the same event exists in more than one place
+
+Use these modes depending on what you want:
+
+```bash
+# Cross-repo view (default)
+tt projects
+
+# Only the current repo
+tt projects --local
+```
 
 **Setup for team repos (recommended):**
 
@@ -199,6 +228,7 @@ tt daily --json
 
 ```bash
 tt projects
+tt projects --local
 tt --project .
 tt daily --project .
 ```
@@ -244,7 +274,7 @@ tt compact --before 2026-01-01 --yes
 tt doctor
 ```
 
-Shows storage mode, layout version, user_id strategy, and event health.
+Shows storage mode, layout version, user_id strategy, repo registry health, and event health.
 
 ### Help
 
