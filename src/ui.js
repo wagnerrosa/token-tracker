@@ -37,6 +37,11 @@ function fmtPct(n) {
   return Math.round(n) + "%";
 }
 
+function fmtPctSmart(n) {
+  if (n >= 10 || n === 0) return Math.round(n) + "%";
+  return n.toFixed(1) + "%";
+}
+
 function fmtDateLong(dateStr) {
   const d = new Date(dateStr + "T12:00:00");
   return `${DAY_NAMES[d.getDay()]} ${d.getDate()} ${MONTH_NAMES[d.getMonth()]}`;
@@ -265,19 +270,24 @@ function renderProjects(projects, { cwd, periodLabel = "last 7 days" } = {}) {
   console.log(`  ${pc.gray(`${projects.length} project${projects.length === 1 ? "" : "s"} · ${fmtCost(total)} total`)}`);
 }
 
-function renderDaily(summaries, { title = "Daily usage", periodLabel = "last 7 days" } = {}) {
+function renderDaily(summaries, { title = "Daily usage", periodLabel = "last 7 days", insights = null } = {}) {
   renderHeaderPeriod(summaries, title, periodLabel);
 
   const today = todayStr();
+  const total = summaries.reduce((s, x) => s + x.total_cost_usd, 0);
+  const totalOrOne = total || 1;
+
   const rows = summaries.map((s) => {
     const isToday = s.date === today;
-    const label = isToday ? "today" : fmtDateShort(s.date);
+    const label = isToday ? "today" : (s.date ? fmtDateShort(s.date) : (s.week_start ? fmtDateShort(s.week_start) : "—"));
     const eventCount = Object.values(s.models).reduce((sum, m) => sum + m.count, 0);
     const tokenCount = s.total_input_tokens + s.total_output_tokens;
+    const pctNum = (s.total_cost_usd / totalOrOne) * 100;
     return {
       label,
       labelColored: isToday ? pc.cyan(label) : pc.gray(label),
       cost: fmtCost(s.total_cost_usd),
+      pct: fmtPctSmart(pctNum),
       tokens: fmtTokens(tokenCount),
       events: fmtInt(eventCount),
     };
@@ -285,19 +295,26 @@ function renderDaily(summaries, { title = "Daily usage", periodLabel = "last 7 d
 
   const labelW = Math.max(...rows.map((r) => r.label.length));
   const costW = Math.max(...rows.map((r) => r.cost.length));
+  const pctW = Math.max(...rows.map((r) => r.pct.length));
   const tokenW = Math.max(...rows.map((r) => r.tokens.length));
 
   for (const r of rows) {
-    console.log(`  ${pad(r.labelColored, labelW)}  ${padLeft(r.cost, costW)}  ${padLeft(r.tokens, tokenW)} tokens  ${pc.gray(r.events + " ev")}`);
+    console.log(`  ${pad(r.labelColored, labelW)}  ${padLeft(r.cost, costW)}  ${pc.gray(padLeft(r.pct, pctW))}  ${padLeft(r.tokens, tokenW)} tokens  ${pc.gray(r.events + " ev")}`);
   }
 
-  const total = summaries.reduce((s, x) => s + x.total_cost_usd, 0);
   const totalTokens = summaries.reduce((s, x) => s + x.total_input_tokens + x.total_output_tokens, 0);
   const avg = summaries.length ? total / summaries.length : 0;
   const avgTokens = summaries.length ? totalTokens / summaries.length : 0;
   console.log();
-  console.log(`  ${pc.gray(pad("total", labelW))}  ${padLeft(fmtCost(total), costW)}  ${padLeft(fmtTokens(totalTokens), tokenW)} tokens`);
-  console.log(`  ${pc.gray(pad("avg", labelW))}  ${padLeft(fmtCost(avg), costW)}  ${padLeft(fmtTokens(avgTokens), tokenW)} tokens`);
+  console.log(`  ${pc.gray(pad("total", labelW))}  ${padLeft(fmtCost(total), costW)}  ${" ".repeat(pctW)}  ${padLeft(fmtTokens(totalTokens), tokenW)} tokens`);
+  console.log(`  ${pc.gray(pad("avg", labelW))}  ${padLeft(fmtCost(avg), costW)}  ${" ".repeat(pctW)}  ${padLeft(fmtTokens(avgTokens), tokenW)} tokens`);
+
+  if (insights && insights.length > 0) {
+    console.log();
+    for (const line of insights) {
+      console.log(`  ${pc.gray("→")} ${line}`);
+    }
+  }
 }
 
 function renderDoctor(report) {
@@ -343,6 +360,7 @@ function renderHelp() {
     ["tt --by-user", "ranking by user cost (last 7 days)"],
     ["tt --user <id>", "filter by user id"],
     ["tt doctor", "health check"],
+    ["tt compact --before <date>", "aggregate + remove raw JSONL older than date"],
   ];
   const cmdW = Math.max(...cmds.map((c) => c[0].length));
   for (const [c, d] of cmds) {
@@ -404,6 +422,7 @@ module.exports = {
   fmtCostPrecise,
   fmtInt,
   fmtPct,
+  fmtPctSmart,
   fmtDateLong,
   todayStr,
   pad,
