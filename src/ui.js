@@ -79,20 +79,16 @@ function cols() {
 }
 
 function tokenBar(value, max, width = 12) {
-  if (!max) return "▱".repeat(width);
+  if (!max) return "░".repeat(width);
   const filled = Math.round((value / max) * width);
-  return "▰".repeat(Math.min(filled, width)) + "▱".repeat(Math.max(0, width - filled));
+  return "█".repeat(Math.min(filled, width)) + "░".repeat(Math.max(0, width - filled));
 }
 
 function bar(pct, width = 12) {
   const filled = Math.round((pct / 100) * width);
-  return "▰".repeat(filled) + "▱".repeat(width - filled);
-}
-
-function barBlock(pct, width = 16) {
-  const filled = Math.round((pct / 100) * width);
   return "█".repeat(Math.min(filled, width)) + "░".repeat(Math.max(0, width - filled));
 }
+
 
 function loadConfig() {
   try {
@@ -310,7 +306,7 @@ function renderDaily(summaries, { title = "Daily usage", periodLabel = "last 7 d
   const BAR_WIDTH = Math.max(4, Math.min(16, cols() - fixedW));
 
   for (const r of rows) {
-    const b = pc.white(barBlock(parseFloat(r.pct), BAR_WIDTH));
+    const b = pc.white(bar(parseFloat(r.pct), BAR_WIDTH));
     console.log(`  ${pad(r.labelColored, labelW)}  ${padLeft(r.cost, costW)}  ${pc.gray(padLeft(r.pct, pctW))}  ${b}  ${padLeft(r.tokens, tokenW)} tokens  ${pc.gray(padLeft(r.events, eventsW) + " ev")}`);
   }
 
