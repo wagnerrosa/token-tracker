@@ -89,6 +89,11 @@ function bar(pct, width = 12) {
   return "▰".repeat(filled) + "▱".repeat(width - filled);
 }
 
+function barBlock(pct, width = 16) {
+  const filled = Math.round((pct / 100) * width);
+  return "█".repeat(Math.min(filled, width)) + "░".repeat(Math.max(0, width - filled));
+}
+
 function loadConfig() {
   try {
     return JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
@@ -297,17 +302,25 @@ function renderDaily(summaries, { title = "Daily usage", periodLabel = "last 7 d
   const costW = Math.max(...rows.map((r) => r.cost.length));
   const pctW = Math.max(...rows.map((r) => r.pct.length));
   const tokenW = Math.max(...rows.map((r) => r.tokens.length));
+  const eventsW = Math.max(...rows.map((r) => r.events.length));
+
+  // bar width: up to 16, clamped so row fits in terminal
+  // fixed chars: 2(indent) + labelW + 2 + costW + 2 + pctW + 2 + BAR + 2 + tokenW + 8(" tokens  ") + eventsW + 3(" ev")
+  const fixedW = 2 + labelW + 2 + costW + 2 + pctW + 2 + 2 + tokenW + 8 + eventsW + 3;
+  const BAR_WIDTH = Math.max(4, Math.min(16, cols() - fixedW));
 
   for (const r of rows) {
-    console.log(`  ${pad(r.labelColored, labelW)}  ${padLeft(r.cost, costW)}  ${pc.gray(padLeft(r.pct, pctW))}  ${padLeft(r.tokens, tokenW)} tokens  ${pc.gray(r.events + " ev")}`);
+    const b = pc.white(barBlock(parseFloat(r.pct), BAR_WIDTH));
+    console.log(`  ${pad(r.labelColored, labelW)}  ${padLeft(r.cost, costW)}  ${pc.gray(padLeft(r.pct, pctW))}  ${b}  ${padLeft(r.tokens, tokenW)} tokens  ${pc.gray(padLeft(r.events, eventsW) + " ev")}`);
   }
 
   const totalTokens = summaries.reduce((s, x) => s + x.total_input_tokens + x.total_output_tokens, 0);
   const avg = summaries.length ? total / summaries.length : 0;
   const avgTokens = summaries.length ? totalTokens / summaries.length : 0;
+  const barGap = " ".repeat(BAR_WIDTH + 2);
   console.log();
-  console.log(`  ${pc.gray(pad("total", labelW))}  ${padLeft(fmtCost(total), costW)}  ${" ".repeat(pctW)}  ${padLeft(fmtTokens(totalTokens), tokenW)} tokens`);
-  console.log(`  ${pc.gray(pad("avg", labelW))}  ${padLeft(fmtCost(avg), costW)}  ${" ".repeat(pctW)}  ${padLeft(fmtTokens(avgTokens), tokenW)} tokens`);
+  console.log(`  ${pc.gray(pad("total", labelW))}  ${padLeft(fmtCost(total), costW)}  ${" ".repeat(pctW)}  ${barGap}${padLeft(fmtTokens(totalTokens), tokenW)} tokens`);
+  console.log(`  ${pc.gray(pad("avg", labelW))}  ${padLeft(fmtCost(avg), costW)}  ${" ".repeat(pctW)}  ${barGap}${padLeft(fmtTokens(avgTokens), tokenW)} tokens`);
 
   if (insights && insights.length > 0) {
     console.log();
