@@ -25,6 +25,8 @@ const localFlag = rest.includes("--local");
 if (rest.length > 0 && !rest[0].startsWith("-")) {
   cmd = rest[0];
 }
+const isProjectCmd = cmd === "project";
+const subcmd = isProjectCmd ? rest[1] : cmd;
 
 function warnOldCache() {
   const ttHome = getTTHome();
@@ -87,7 +89,7 @@ function filterByProjectPath(events, projectPath) {
 function projectShareLine(projectTotal, globalTotal, periodText) {
   if (!globalTotal || !projectTotal) return null;
   const pct = ui.fmtPctSmart((projectTotal / globalTotal) * 100);
-  return `${ui.pc.white("project")} accounts for ${ui.pc.white(pct)} of ${periodText}`;
+  return `${ui.pc.cyan("project")} accounts for ${ui.pc.white(pct)} of ${periodText}`;
 }
 
 function buildDailyInsights(last7, allScoped) {
@@ -136,7 +138,7 @@ function buildWeeklyInsights(weekly) {
 }
 
 async function main() {
-  if (helpFlag) {
+  if (helpFlag || cmd === "help") {
     ui.renderHelp();
     return;
   }
@@ -158,6 +160,7 @@ async function main() {
   const events = await readEvents();
   await enrichCosts(events);
   const repoContext = resolveProjectContext();
+  const projectFocused = isProjectCmd || projectFlag !== null;
 
   // --user <id> filter
   if (userFlag !== null) {
@@ -186,7 +189,7 @@ async function main() {
   }
 
   // projects command
-  if (cmd === "projects") {
+  if (subcmd === "projects") {
     const projectEvents = localFlag ? events : await readAllRepos();
     await enrichCosts(projectEvents);
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -206,11 +209,12 @@ async function main() {
   }
 
   const currentProjectEvents = repoContext ? filterByProjectPath(events, repoContext.projectPath) : [];
+  const currentProjectName = repoContext ? repoContext.projectName : "project";
+  let focusedProjectName = currentProjectName;
 
   // project filter
   let scoped = events;
   let projectFilterResolved = null;
-  let projectFocused = false;
   if (projectFlag !== null) {
     const rawDir = projectFlag === "." ? process.cwd() : path.resolve(projectFlag);
     let cwd;
@@ -221,12 +225,15 @@ async function main() {
       ui.renderEmpty(`no data for project: ${cwd}`);
       return;
     }
-    projectFocused = true;
+  } else if (isProjectCmd) {
+    projectFilterResolved = repoContext ? repoContext.projectPath : null;
+    scoped = currentProjectEvents;
   }
+  focusedProjectName = projectFilterResolved ? path.basename(projectFilterResolved) || "project" : currentProjectName;
 
   const daily = aggregate(scoped, { granularity: "daily" });
 
-  if (cmd === "daily") {
+  if (subcmd === "daily") {
     const globalDaily = aggregate(events, { granularity: "daily" });
     const projectDaily = repoContext ? aggregate(currentProjectEvents, { granularity: "daily" }) : [];
     if (projectFocused) {
@@ -236,7 +243,7 @@ async function main() {
       } else if (focusedDaily.length === 0) {
         ui.renderEmpty("no data");
       } else {
-        ui.renderDaily(focusedDaily, { title: `project (${path.basename(projectFilterResolved)})`, periodLabel: "last 7 days" });
+        ui.renderDaily(focusedDaily, { title: `project (${focusedProjectName})`, periodLabel: "last 7 days" });
       }
       return;
     }
@@ -248,21 +255,24 @@ async function main() {
       ui.renderEmpty("no data");
     } else {
       const insights = buildDailyInsights(globalLast7, events);
-      const share = projectLast7.length > 0 ? projectShareLine(
-        projectLast7.reduce((s, x) => s + x.total_cost_usd, 0),
-        globalLast7.reduce((s, x) => s + x.total_cost_usd, 0),
-        "last 7 days of usage",
-      ) : null;
-      if (share) insights.push(share);
+      if (!projectFocused && projectLast7.length > 0) {
+        const share = projectShareLine(
+          projectLast7.reduce((s, x) => s + x.total_cost_usd, 0),
+          globalLast7.reduce((s, x) => s + x.total_cost_usd, 0),
+          "last 7 days of usage",
+        );
+        if (share) insights.push(share);
+      }
       ui.renderDaily(globalLast7, { title: "global", periodLabel: "last 7 days", insights });
       if (repoContext && projectLast7.length > 0) {
-        ui.renderDaily(projectLast7, { title: `project (${repoContext.projectName})`, periodLabel: "last 7 days", insights: buildDailyInsights(projectLast7, currentProjectEvents) });
+        console.log();
+        ui.renderDaily(projectLast7, { title: `project (${currentProjectName})`, periodLabel: "last 7 days", insights: buildDailyInsights(projectLast7, currentProjectEvents) });
       }
     }
     return;
   }
 
-  if (cmd === "weekly") {
+  if (subcmd === "weekly") {
     const globalWeekly = aggregate(events, { granularity: "weekly" }).slice(-4).reverse();
     const projectWeekly = repoContext ? aggregate(currentProjectEvents, { granularity: "weekly" }).slice(-4).reverse() : [];
     if (projectFocused) {
@@ -272,7 +282,7 @@ async function main() {
       } else if (focusedWeekly.length === 0) {
         ui.renderEmpty("no data");
       } else {
-        ui.renderDaily(focusedWeekly, { title: `project (${path.basename(projectFilterResolved)})`, periodLabel: "last 4 weeks" });
+        ui.renderDaily(focusedWeekly, { title: `project (${focusedProjectName})`, periodLabel: "last 4 weeks" });
       }
       return;
     }
@@ -282,15 +292,18 @@ async function main() {
       ui.renderEmpty("no data");
     } else {
       const insights = buildWeeklyInsights(globalWeekly);
-      const share = projectWeekly.length > 0 ? projectShareLine(
-        projectWeekly.reduce((s, x) => s + x.total_cost_usd, 0),
-        globalWeekly.reduce((s, x) => s + x.total_cost_usd, 0),
-        "last 4 weeks of usage",
-      ) : null;
-      if (share) insights.push(share);
+      if (!projectFocused && projectWeekly.length > 0) {
+        const share = projectShareLine(
+          projectWeekly.reduce((s, x) => s + x.total_cost_usd, 0),
+          globalWeekly.reduce((s, x) => s + x.total_cost_usd, 0),
+          "last 4 weeks of usage",
+        );
+        if (share) insights.push(share);
+      }
       ui.renderDaily(globalWeekly, { title: "global", periodLabel: "last 4 weeks", insights });
       if (repoContext && projectWeekly.length > 0) {
-        ui.renderDaily(projectWeekly, { title: `project (${repoContext.projectName})`, periodLabel: "last 4 weeks", insights: buildWeeklyInsights(projectWeekly) });
+        console.log();
+        ui.renderDaily(projectWeekly, { title: `project (${currentProjectName})`, periodLabel: "last 4 weeks", insights: buildWeeklyInsights(projectWeekly) });
       }
     }
     return;
@@ -301,6 +314,26 @@ async function main() {
   const todaySummary = daily.find((s) => s.date === todayDate);
   const todayProjectDaily = repoContext ? aggregate(currentProjectEvents, { granularity: "daily" }) : [];
   const todayProjectSummary = todayProjectDaily.find((s) => s.date === todayDate);
+  if (projectFocused) {
+    if (jsonFlag) {
+      const focusedDaily = todayProjectSummary ? [todayProjectSummary] : [];
+      console.log(JSON.stringify({ today: todayDate, daily: focusedDaily, weekly: todayProjectDaily }, null, 2));
+      return;
+    }
+    if (!todayProjectSummary) {
+      ui.renderEmpty("today: no data");
+      return;
+    }
+    const projectTodayEvents = scoped.filter((e) => localDate(e.ts) === todayDate);
+    ui.renderToday(todayProjectSummary, {
+      title: `project (${focusedProjectName})`,
+      projectsByCost: byProject(projectTodayEvents),
+      usersByCost: [],
+      missingCount: countMissingPricing(projectTodayEvents),
+      projectFilter: projectFilterResolved,
+    });
+    return;
+  }
 
   if (!todaySummary) {
     if (!isFirstRun) ui.renderEmpty("today: no data");
@@ -317,34 +350,26 @@ async function main() {
   const projectsByCost = byProject(todayEvents);
   const usersByCost = byUser(todayEvents);
   const missingCount = countMissingPricing(todayEvents);
-  if (projectFocused) {
-    const focusedEvents = scoped.filter((e) => localDate(e.ts) === todayDate);
-    const focusedProjects = byProject(focusedEvents);
-    ui.renderToday(todaySummary, {
-      title: `project (${path.basename(projectFilterResolved)})`,
-      projectsByCost: focusedProjects,
-      usersByCost: [],
-      missingCount,
-      projectFilter: projectFilterResolved,
-    });
-    return;
-  }
 
   ui.renderToday(todaySummary, {
-    title: repoContext ? "global" : "tt",
+    title: "global",
     projectsByCost,
     usersByCost,
     missingCount,
     projectFilter: projectFilterResolved,
-    extraInsights: repoContext && todayProjectSummary
-      ? [projectShareLine(todayProjectSummary.total_cost_usd, todaySummary.total_cost_usd, "today's usage")]
-      : [],
+    extraInsights: (() => {
+      const share = repoContext && todayProjectSummary
+        ? projectShareLine(todayProjectSummary.total_cost_usd, todaySummary.total_cost_usd, "today's usage")
+        : null;
+      return share ? [share] : [];
+    })(),
   });
 
   if (repoContext && todayProjectSummary) {
     const projectTodayEvents = currentProjectEvents.filter((e) => localDate(e.ts) === todayDate);
+    console.log();
     ui.renderToday(todayProjectSummary, {
-      title: `project (${repoContext.projectName})`,
+      title: `project (${currentProjectName})`,
       projectsByCost: byProject(projectTodayEvents),
       usersByCost: [],
       missingCount: countMissingPricing(projectTodayEvents),

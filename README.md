@@ -4,6 +4,13 @@
 [![License: ISC](https://img.shields.io/badge/license-ISC-blue.svg)](#license)
 [![Status](https://img.shields.io/badge/status-active%20development-brightgreen)](#roadmap)
 
+```text
+··········  TT  token-tracker v1.0.0
+·▓▓▓··▓▓▓·  AI usage cost per project and per user
+··▓····▓··  local-first · no external services · no database
+··········
+```
+
 **Understand what each project is actually costing in AI usage.**
 
 TokenTracker is a local-first CLI that turns raw LLM logs into clear cost and usage insights by project, model, and time period.
@@ -67,8 +74,10 @@ tt projects
 # Top projects only in the current repo
 tt projects --local
 
-# Scope to current working directory project
-tt --project .
+# Current project only
+tt project
+tt project daily
+tt project weekly
 
 # User ranking (when collaborating)
 tt --by-user
@@ -78,6 +87,9 @@ tt --user alice@example.com
 
 # Health and diagnostics
 tt doctor
+
+# Help
+tt help
 ```
 
 ---
@@ -229,8 +241,9 @@ tt daily --json
 ```bash
 tt projects
 tt projects --local
-tt --project .
-tt daily --project .
+tt project
+tt project daily
+tt project weekly
 ```
 
 ### Context-aware usage
@@ -242,7 +255,7 @@ When you run `tt` inside a Git repository, the default output is split into two 
 
 The same split applies to `tt daily` and `tt weekly`.
 
-Use `tt --project .` for focused project-only output with no global block.
+Use `tt project` for focused project-only output with no global block.
 
 ### Users (team collaboration)
 
@@ -290,7 +303,7 @@ Shows storage mode, layout version, user_id strategy, repo registry health, and 
 ### Help
 
 ```bash
-tt --help
+tt help
 ```
 
 ---

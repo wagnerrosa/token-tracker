@@ -83,14 +83,16 @@ function cols() {
 }
 
 function tokenBar(value, max, width = 12) {
-  if (!max) return "░".repeat(width);
+  if (!max) return "·".repeat(width);
   const filled = Math.round((value / max) * width);
-  return "█".repeat(Math.min(filled, width)) + "░".repeat(Math.max(0, width - filled));
+  const empty = Math.max(0, width - filled);
+  return "█".repeat(Math.min(filled, width)) + "·".repeat(empty);
 }
 
 function bar(pct, width = 12) {
   const filled = Math.round((pct / 100) * width);
-  return "█".repeat(Math.min(filled, width)) + "░".repeat(Math.max(0, width - filled));
+  const empty = Math.max(0, width - filled);
+  return "█".repeat(Math.min(filled, width)) + "·".repeat(empty);
 }
 
 
@@ -123,7 +125,9 @@ function detectedProviders() {
 function renderHeaderToday(summary, title = "tt") {
   const dateStr = todayStr();
   const cost = summary ? fmtCost(summary.total_cost_usd) : fmtCost(0);
-  console.log(`${pc.white(title)}  ${pc.white(cost)}  ${pc.gray("today")}`);
+  const isSection = title === "global" || String(title).startsWith("project");
+  const renderedTitle = isSection ? pc.cyan(title) : pc.white(title);
+  console.log(`${renderedTitle}  ${pc.white(cost)}  ${pc.gray("today")}`);
   console.log(`    ${pc.gray(fmtDateLong(dateStr))}`);
   console.log();
 }
@@ -139,9 +143,11 @@ function renderHeaderProjects(projects, periodLabel) {
 
 function renderHeaderPeriod(summaries, title, periodLabel) {
   const total = summaries.reduce((s, x) => s + x.total_cost_usd, 0);
-  const renderedTitle = String(title).toLowerCase();
-  const indent = " ".repeat(renderedTitle.length);
-  console.log(`${pc.white(renderedTitle)}  ${pc.white(fmtCost(total))}`);
+  const normalized = String(title);
+  const isSection = normalized === "global" || normalized.startsWith("project");
+  const renderedTitle = isSection ? pc.cyan(normalized) : pc.white(normalized);
+  const indent = " ".repeat(normalized.length);
+  console.log(`${renderedTitle}  ${pc.white(fmtCost(total))}`);
   console.log(`${indent}  ${pc.gray(periodLabel)}`);
   console.log();
 }
@@ -172,8 +178,8 @@ function renderToday(summary, { title = "tt", projectsByCost, usersByCost, missi
 
   console.log(`${pc.gray("tokens")}${hiddenCompat("Tokens")}`);
   for (const [label, val] of barRows) {
-    const b = tokenBar(val, totalTokens);
-    console.log(`  ${pc.gray(pad(label, labelW))}   ${pc.white(b)}   ${padLeft(fmtTokens(val), valueW)}`);
+    const rawBar = tokenBar(val, totalTokens, 12);
+    console.log(`  ${pc.gray(pad(label, labelW))}   ${pc.white(rawBar)}   ${padLeft(fmtTokens(val), valueW)}`);
   }
   if (cacheRows.length > 0) {
     console.log();
@@ -250,7 +256,7 @@ function renderToday(summary, { title = "tt", projectsByCost, usersByCost, missi
   if (missingCount > 0) {
     console.log(`  ${pc.yellow(`⚠ ${missingCount} model${missingCount === 1 ? "" : "s"} missing pricing — run tt doctor`)}`);
   }
-  for (const line of extraInsights) {
+  for (const line of extraInsights.filter(Boolean)) {
     console.log(`  ${pc.gray("→")} ${line}`);
   }
 }
@@ -351,14 +357,10 @@ function renderDoctor(report) {
 }
 
 function renderHelp() {
-  console.log(`  ${pc.gray("░░░░░░░░░░")}`);
-  console.log(`  ${pc.gray("░▓▓▓░░▓▓▓░")}`);
-  console.log(`  ${pc.gray("░▒▓▒░░▒▓▒░")}`);
-  console.log(`  ${pc.gray("░░░░░░░░░░")}`);
-  console.log();
-  console.log(`  ${pc.white("TT")}  ${pc.white("token-tracker")} ${pc.gray("v" + VERSION)}`);
-  console.log(`  ${pc.gray("AI usage cost per project and per user")}`);
-  console.log(`  ${pc.gray("local-first · no external services · no database")}`);
+  console.log(`  ${pc.gray("··········")}  ${pc.white("TT")}  ${pc.white("token-tracker")} ${pc.gray("v" + VERSION)}`);
+  console.log(`  ${pc.gray("·▓▓▓··▓▓▓·")}  ${pc.gray("AI usage cost per project and per user")}`);
+  console.log(`  ${pc.gray("··▓····▓··")}  ${pc.gray("local-first · no external services · no database")}`);
+  console.log(`  ${pc.gray("··········")}`);
   console.log();
 
   console.log(`  ${pc.gray("data sources")}`);
@@ -373,24 +375,24 @@ function renderHelp() {
 
   console.log(`  ${pc.gray("commands")}`);
   const cmds = [
-    ["tt", "today summary"],
+    ["tt", "today (global + current project)"],
     ["tt daily", "last 7 days"],
     ["tt weekly", "last 4 weeks"],
-    ["tt projects", "ranking by cost"],
-    ["tt projects --local", "current repo only"],
-    ["tt --project .", "filter current project"],
-    ["tt --by-user", "user ranking (7d)"],
-    ["tt --user <id>", "filter by user"],
-    ["tt doctor", "health check"],
-    ["tt compact --before", "aggregate old data"],
+    ["tt project", "current project only"],
+    ["tt project daily", "current project only"],
+    ["tt project weekly", "current project only"],
+    ["tt help", "show help"],
+    ["tt projects", "ranking across repos"],
+    ["tt projects --local", "ranking current repo only"],
+    ["tt doctor", "system diagnostics"],
   ];
   const cmdW = Math.max(...cmds.map((c) => c[0].length));
   for (const [c, d] of cmds) {
     console.log(`  ${pad(c, cmdW)}  ${pc.gray(d)}`);
   }
   console.log();
-  console.log(`  ${pc.gray("tip:")} run tt --project . inside a repo`);
-  console.log(`  ${pc.gray("to see only that project's costs")}`);
+  console.log(`  ${pc.gray("inside a git repo, tt shows both global and project usage")}`);
+  console.log(`  ${pc.gray('use "tt project" to focus only on the current project')}`);
   console.log();
 }
 

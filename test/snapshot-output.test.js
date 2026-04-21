@@ -86,7 +86,7 @@ test("snapshot: default output (no flags) is stable across versions", () => {
   assert.ok(!mainContent.includes("--user"));
 });
 
-test("snapshot: --project . shows focused project block only", () => {
+test("snapshot: project command shows focused project block only", () => {
   const parsersPath = require.resolve("../src/parsers");
   require.cache[parsersPath] = {
     id: parsersPath,
@@ -95,7 +95,7 @@ test("snapshot: --project . shows focused project block only", () => {
     exports: { getAll: () => [], getByName: () => null },
   };
 
-  const result = spawnSync("node", [path.join(__dirname, "../src/cli.js"), "--project", "."], {
+  const result = spawnSync("node", [path.join(__dirname, "../src/cli.js"), "project"], {
     cwd: tmpRoot,
     env: { ...process.env, TT_HOME: process.env.TT_HOME },
     encoding: "utf8",
@@ -104,6 +104,20 @@ test("snapshot: --project . shows focused project block only", () => {
   const output = result.stdout;
   assert.ok(output.includes(`project (${path.basename(tmpRoot)})`), "focused project label present");
   assert.ok(!output.includes("global"), "global block omitted in focused mode");
+});
+
+test("snapshot: help alias prints onboarding/help screen", () => {
+  const result = spawnSync("node", [path.join(__dirname, "../src/cli.js"), "help"], {
+    cwd: tmpRoot,
+    env: { ...process.env, TT_HOME: process.env.TT_HOME },
+    encoding: "utf8",
+  });
+
+  const output = result.stdout;
+  assert.equal(result.status, 0);
+  assert.ok(output.includes("token-tracker"), "help banner present");
+  assert.ok(output.includes("data sources"), "help sections present");
+  assert.ok(output.includes("tt help"), "help alias listed");
 });
 
 test("snapshot: --json output is parseable JSON", () => {
