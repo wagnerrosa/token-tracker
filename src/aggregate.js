@@ -123,4 +123,37 @@ function byProject(events, { since, until } = {}) {
   return [...map.values()].sort((a, b) => b.total_cost_usd - a.total_cost_usd);
 }
 
-module.exports = { aggregate, byProject, localDate, periodKey, weekStart };
+function byUser(events, { since, until } = {}) {
+  const map = new Map();
+
+  for (const ev of events) {
+    if (since && ev.ts < since) continue;
+    if (until && ev.ts > until) continue;
+
+    const key = ev.user_id || "unknown";
+    let u = map.get(key);
+    if (!u) {
+      u = {
+        user_id: ev.user_id || null,
+        user_name: ev.user_name || null,
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        cache_read_tokens: 0,
+        total_cost_usd: 0,
+        count: 0,
+      };
+      map.set(key, u);
+    }
+
+    u.total_input_tokens += ev.input_tokens || 0;
+    u.total_output_tokens += ev.output_tokens || 0;
+    u.cache_read_tokens += ev.cache_read_tokens || 0;
+    u.total_cost_usd += ev.cost_usd || 0;
+    u.count += 1;
+    if (!u.user_name && ev.user_name) u.user_name = ev.user_name;
+  }
+
+  return [...map.values()].sort((a, b) => b.total_cost_usd - a.total_cost_usd);
+}
+
+module.exports = { aggregate, byProject, byUser, localDate, periodKey, weekStart };
