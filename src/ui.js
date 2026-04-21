@@ -309,6 +309,8 @@ function renderHelp() {
     ["tt weekly", "last 4 weeks"],
     ["tt projects", "ranking by cost"],
     ["tt --project .", "filter by current project"],
+    ["tt --by-user", "ranking by user cost (last 7 days)"],
+    ["tt --user <id>", "filter by user id"],
     ["tt doctor", "health check"],
   ];
   const cmdW = Math.max(...cmds.map((c) => c[0].length));
@@ -327,6 +329,33 @@ function maybeOnboard() {
   renderHelp();
   saveConfig({ ...cfg, onboarded: true });
   return true;
+}
+
+function renderUsers(users, { periodLabel = "last 7 days" } = {}) {
+  const total = users.reduce((s, u) => s + u.total_cost_usd, 0);
+  const title = "Users";
+  const indent = " ".repeat(title.length);
+  console.log(`${pc.white(title)}  ${pc.white(fmtCost(total))}`);
+  console.log(`${indent}  ${pc.gray(periodLabel)}`);
+  console.log();
+
+  const totalCost = total || 1;
+  const names = users.map((u) => u.user_id || "unknown");
+  const nameW = Math.max(...names.map((n) => n.length));
+  const costs = users.map((u) => fmtCost(u.total_cost_usd));
+  const costW = Math.max(...costs.map((c) => c.length));
+  const idxW = String(users.length).length;
+
+  for (let i = 0; i < users.length; i++) {
+    const u = users[i];
+    const pct = (u.total_cost_usd / totalCost) * 100;
+    const name = i === 0 ? pc.white(names[i]) : pc.gray(names[i]);
+    console.log(
+      `  ${pc.gray(padLeft(i + 1, idxW))}  ${pad(name, nameW)}  ${padLeft(costs[i], costW)}  ${padLeft(fmtPct(pct), 3)}   ${pc.white(bar(pct))}`
+    );
+  }
+  console.log();
+  console.log(`  ${pc.gray(`${users.length} user${users.length === 1 ? "" : "s"} · ${fmtCost(total)} total`)}`);
 }
 
 function renderEmpty(msg) {
@@ -356,6 +385,7 @@ module.exports = {
   renderToday,
   renderProjects,
   renderDaily,
+  renderUsers,
   renderDoctor,
   renderHelp,
   renderEmpty,

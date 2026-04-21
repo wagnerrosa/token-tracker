@@ -3,7 +3,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { aggregate, byProject, localDate } = require("./aggregate");
+const { aggregate, byProject, byUser, localDate } = require("./aggregate");
 const { resolveModel, MODELS } = require("./services/pricing");
 const { read: readEvents, ingestAll, enrichCosts } = require("./event-log");
 const { doctor } = require("./doctor");
@@ -15,6 +15,8 @@ let cmd = null;
 const jsonFlag = rest.includes("--json");
 const helpFlag = rest.includes("--help") || rest.includes("-h");
 const projectFlag = rest.includes("--project") ? rest[rest.indexOf("--project") + 1] : null;
+const byUserFlag = rest.includes("--by-user");
+const userFlag = rest.includes("--user") ? rest[rest.indexOf("--user") + 1] : null;
 if (rest.length > 0 && !rest[0].startsWith("-")) {
   cmd = rest[0];
 }
@@ -59,6 +61,32 @@ async function main() {
   await ingestAll();
   const events = await readEvents();
   await enrichCosts(events);
+
+  // --user <id> filter
+  if (userFlag !== null) {
+    const matched = events.filter((e) => e.user_id === userFlag);
+    if (matched.length === 0) {
+      ui.renderEmpty(`no data for user: ${userFlag}`);
+      return;
+    }
+    events.splice(0, events.length, ...matched);
+  }
+
+  // --by-user ranking
+  if (byUserFlag) {
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const users = byUser(events, { since });
+    if (jsonFlag) {
+      console.log(JSON.stringify(users, null, 2));
+      return;
+    }
+    if (users.length === 0) {
+      ui.renderEmpty("no data");
+      return;
+    }
+    ui.renderUsers(users, { periodLabel: "last 7 days" });
+    return;
+  }
 
   // projects command
   if (cmd === "projects") {
