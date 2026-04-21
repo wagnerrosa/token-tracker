@@ -80,7 +80,8 @@ tt project daily
 tt project weekly
 
 # User ranking (when collaborating)
-tt --by-user
+tt users
+tt users daily
 
 # Filter by user
 tt --user alice@example.com
@@ -246,6 +247,17 @@ tt project daily
 tt project weekly
 ```
 
+### Users
+
+```bash
+tt users
+tt users daily
+tt users weekly
+tt project users
+tt project users daily
+tt project users weekly
+```
+
 ### Context-aware usage
 
 When you run `tt` inside a Git repository, the default output is split into two blocks:
@@ -253,17 +265,25 @@ When you run `tt` inside a Git repository, the default output is split into two 
 - `global` for today's overall usage in the current storage
 - `project (name)` for the current repository, filtered by `project_path`
 
-The same split applies to `tt daily` and `tt weekly`.
+The same split applies to `tt daily`, `tt weekly`, and `tt users`.
 
-Use `tt project` for focused project-only output with no global block.
+Use `tt project` or `tt project users` for focused project-only output with no global block.
 
 ### Users (team collaboration)
 
 ```bash
-tt --by-user
+tt users
+tt users daily
+tt users weekly
+tt project users
+tt project users daily
+tt project users weekly
 tt --user alice@example.com
+tt --by-user
 tt --by-user --json
 ```
+
+`tt --by-user` is still supported for compatibility, but `tt users` is the preferred command.
 
 ### Archiving and rotation
 
