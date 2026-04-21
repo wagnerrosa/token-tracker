@@ -7,7 +7,7 @@ const { aggregate, byProject, localDate } = require("./aggregate");
 const { resolveModel, MODELS } = require("./services/pricing");
 const { read: readEvents, ingestAll, enrichCosts } = require("./event-log");
 const { doctor } = require("./doctor");
-const { TT_HOME, CACHE_DIR } = require("./types");
+const { getTTHome } = require("./storage-path");
 const ui = require("./ui");
 
 const [, , ...rest] = process.argv;
@@ -20,11 +20,13 @@ if (rest.length > 0 && !rest[0].startsWith("-")) {
 }
 
 function warnOldCache() {
-  if (fs.existsSync(CACHE_DIR)) {
-    const flag = path.join(TT_HOME, ".cache_warning_shown");
+  const ttHome = getTTHome();
+  const cacheDir = path.join(ttHome, "cache");
+  if (fs.existsSync(cacheDir)) {
+    const flag = path.join(ttHome, ".cache_warning_shown");
     if (!fs.existsSync(flag)) {
-      console.error(`warning: legacy cache detected at ${CACHE_DIR} (no longer used)`);
-      console.error(`  you can remove it with: rm -rf ${CACHE_DIR}`);
+      console.error(`warning: legacy cache detected at ${cacheDir} (no longer used)`);
+      console.error(`  you can remove it with: rm -rf ${cacheDir}`);
       try { fs.writeFileSync(flag, "1"); } catch { /* ignore */ }
     }
   }

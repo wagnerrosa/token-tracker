@@ -4,17 +4,14 @@ const fs = require("fs");
 const fsp = require("fs/promises");
 const path = require("path");
 const { glob } = require("glob");
-const { TT_HOME } = require("./types");
-
-const EVENTS_DIR = path.join(TT_HOME, "events");
-const CURSORS_DIR = path.join(TT_HOME, "cursors");
+const { getEventsDir, getCursorsDir } = require("./storage-path");
 
 function eventDate(ts) {
   return new Date(ts).toISOString().slice(0, 10);
 }
 
 function eventFile(source, date) {
-  return path.join(EVENTS_DIR, source, `${date}.jsonl`);
+  return path.join(getEventsDir(), source, `${date}.jsonl`);
 }
 
 function todayISO() {
@@ -44,7 +41,7 @@ async function read({ source, since, until, project } = {}) {
   const results = [];
 
   for (const src of sources) {
-    const pattern = path.join(EVENTS_DIR, src, "*.jsonl");
+    const pattern = path.join(getEventsDir(), src, "*.jsonl");
     let files;
     try {
       files = await glob(pattern, { nodir: true });
@@ -88,7 +85,7 @@ async function read({ source, since, until, project } = {}) {
 
 async function listSources() {
   try {
-    const entries = await fsp.readdir(EVENTS_DIR, { withFileTypes: true });
+    const entries = await fsp.readdir(getEventsDir(), { withFileTypes: true });
     return entries.filter((e) => e.isDirectory()).map((e) => e.name);
   } catch {
     return [];
@@ -96,7 +93,7 @@ async function listSources() {
 }
 
 function cursorPath(source) {
-  return path.join(CURSORS_DIR, `${source}.json`);
+  return path.join(getCursorsDir(), `${source}.json`);
 }
 
 async function loadCursor(source) {
@@ -120,7 +117,7 @@ async function loadCursor(source) {
 }
 
 async function saveCursor(source, cursor) {
-  await fsp.mkdir(CURSORS_DIR, { recursive: true });
+  await fsp.mkdir(getCursorsDir(), { recursive: true });
   const p = cursorPath(source);
   const tmp = `${p}.tmp`;
   await fsp.writeFile(tmp, JSON.stringify(cursor, null, 2));
@@ -230,6 +227,6 @@ module.exports = {
   recoverSeenKeys,
   ingestAll,
   enrichCosts,
-  EVENTS_DIR,
-  CURSORS_DIR,
+  get EVENTS_DIR() { return getEventsDir(); },
+  get CURSORS_DIR() { return getCursorsDir(); },
 };

@@ -4,7 +4,7 @@ const fs = require("fs");
 const fsp = require("fs/promises");
 const path = require("path");
 const { glob } = require("glob");
-const { TT_HOME } = require("./types");
+const { getTTHome } = require("./storage-path");
 const { EVENTS_DIR, CURSORS_DIR } = require("./event-log");
 const { resolveModel, MODELS, CACHE_PATH: PRICING_CACHE_PATH } = require("./services/pricing");
 const ui = require("./ui");
@@ -131,15 +131,16 @@ async function doctor() {
   }
 
   // 3. Storage
+  const ttHome = getTTHome();
   try {
-    const entries = await fsp.readdir(TT_HOME, { withFileTypes: true, recursive: true });
+    const entries = await fsp.readdir(ttHome, { withFileTypes: true, recursive: true });
     let fileCount = 0;
     let totalBytes = 0;
     for (const e of entries) {
       if (e.isFile()) {
         fileCount++;
         try {
-          const full = path.join(e.path || TT_HOME, e.name);
+          const full = path.join(e.path || ttHome, e.name);
           const st = await fsp.stat(full);
           totalBytes += st.size;
         } catch { /* ignore */ }
@@ -148,13 +149,13 @@ async function doctor() {
     const mb = (totalBytes / 1024 / 1024).toFixed(1);
     storage.items.push({
       level: "ok",
-      text: `~/.token-tracker  ${ui.pc.gray(`${fileCount} files · ${mb} MB`)}`,
+      text: `${ttHome}  ${ui.pc.gray(`${fileCount} files · ${mb} MB`)}`,
     });
   } catch {
-    storage.items.push({ level: "warn", text: "~/.token-tracker  inaccessible" });
+    storage.items.push({ level: "warn", text: `${ttHome}  inaccessible` });
   }
 
-  const oldCache = path.join(TT_HOME, "cache");
+  const oldCache = path.join(ttHome, "cache");
   if (fs.existsSync(oldCache)) {
     storage.items.push({
       level: "warn",

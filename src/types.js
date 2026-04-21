@@ -1,11 +1,8 @@
 "use strict";
 
-const os = require("os");
-const path = require("path");
+const { getTTHome } = require("./storage-path");
 
 const CACHE_VERSION = 1;
-const TT_HOME = path.join(os.homedir(), ".token-tracker");
-const CACHE_DIR = path.join(TT_HOME, "cache");
 
 function createUsageEntry(data = {}) {
   return {
@@ -42,8 +39,8 @@ function createDailySummary(data = {}) {
 
 module.exports = {
   CACHE_VERSION,
-  TT_HOME,
-  CACHE_DIR,
+  get TT_HOME() { return getTTHome(); },
+  get CACHE_DIR() { return require("path").join(getTTHome(), "cache"); },
   createUsageEntry,
   createDailySummary,
 };

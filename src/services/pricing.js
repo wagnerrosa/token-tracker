@@ -3,11 +3,12 @@
 const fs = require("fs");
 const path = require("path");
 const https = require("https");
-const { TT_HOME } = require("../types");
+const { getTTHome } = require("../storage-path");
 
 const LITELLM_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
-const CACHE_PATH = path.join(TT_HOME, "pricing.json");
+
+function getCachePath() { return path.join(getTTHome(), "pricing.json"); }
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
 // Canonical model table. Key = litellm_key used in pricing lookup.
@@ -54,7 +55,7 @@ let _cache = null;
 
 function loadCacheFromDisk() {
   try {
-    const raw = fs.readFileSync(CACHE_PATH, "utf8");
+    const raw = fs.readFileSync(getCachePath(), "utf8");
     const data = JSON.parse(raw);
     if (data && data.fetched_at && data.models) return data;
   } catch {
@@ -65,8 +66,8 @@ function loadCacheFromDisk() {
 
 function saveCacheToDisk(cache) {
   try {
-    fs.mkdirSync(TT_HOME, { recursive: true });
-    fs.writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2));
+    fs.mkdirSync(getTTHome(), { recursive: true });
+    fs.writeFileSync(getCachePath(), JSON.stringify(cache, null, 2));
   } catch {
     // ignore
   }
@@ -151,4 +152,4 @@ async function getCost(entry) {
   return result.cost_usd ?? 0;
 }
 
-module.exports = { getCost, getCache, computeCost, resolveModel, CACHE_PATH, MODELS };
+module.exports = { getCost, getCache, computeCost, resolveModel, get CACHE_PATH() { return getCachePath(); }, MODELS };

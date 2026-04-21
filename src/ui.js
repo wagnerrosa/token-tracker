@@ -3,10 +3,10 @@
 const fs = require("fs");
 const path = require("path");
 const pc = require("picocolors");
-const { TT_HOME } = require("./types");
+const { getTTHome } = require("./storage-path");
 const { resolveModel } = require("./services/pricing");
 
-const CONFIG_PATH = path.join(TT_HOME, "config.json");
+function getConfigPath() { return path.join(getTTHome(), "config.json"); }
 const VERSION = require("../package.json").version;
 
 const DAY_NAMES = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
@@ -86,7 +86,7 @@ function bar(pct, width = 12) {
 
 function loadConfig() {
   try {
-    return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
+    return JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
   } catch {
     return {};
   }
@@ -94,8 +94,8 @@ function loadConfig() {
 
 function saveConfig(cfg) {
   try {
-    fs.mkdirSync(TT_HOME, { recursive: true });
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+    fs.mkdirSync(getTTHome(), { recursive: true });
+    fs.writeFileSync(getConfigPath(), JSON.stringify(cfg, null, 2));
   } catch { /* ignore */ }
 }
 
