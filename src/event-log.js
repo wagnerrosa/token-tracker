@@ -92,12 +92,16 @@ async function listSources() {
   }
 }
 
-function cursorPath(source) {
+function cursorPath(source, userId) {
+  if (userId) {
+    return path.join(getCursorsDir(), source, `${userId}.json`);
+  }
+  // legacy path for backward compat
   return path.join(getCursorsDir(), `${source}.json`);
 }
 
-async function loadCursor(source) {
-  const p = cursorPath(source);
+async function loadCursor(source, userId) {
+  const p = cursorPath(source, userId);
   try {
     const raw = await fsp.readFile(p, "utf8");
     const cursor = JSON.parse(raw);
@@ -116,9 +120,9 @@ async function loadCursor(source) {
   }
 }
 
-async function saveCursor(source, cursor) {
-  await fsp.mkdir(getCursorsDir(), { recursive: true });
-  const p = cursorPath(source);
+async function saveCursor(source, cursor, userId) {
+  const p = cursorPath(source, userId);
+  await fsp.mkdir(path.dirname(p), { recursive: true });
   const tmp = `${p}.tmp`;
   await fsp.writeFile(tmp, JSON.stringify(cursor, null, 2));
   await fsp.rename(tmp, p);
@@ -171,7 +175,7 @@ async function ingestAll() {
   const user_name = getUserName();
 
   for (const parser of getAll()) {
-    const cursor = await loadCursor(parser.name);
+    const cursor = await loadCursor(parser.name, user_id);
     let seen = new Set(cursor.seen_keys_today);
     if (seen.size === 0) {
       const recovered = await recoverSeenKeys(parser.name);
@@ -218,7 +222,7 @@ async function ingestAll() {
 
     cursor.seen_keys_today = [...seen];
     try {
-      await saveCursor(parser.name, cursor);
+      await saveCursor(parser.name, cursor, user_id);
     } catch (err) {
       if (process.env.TT_DEBUG) console.error(`[event-log] cursor save failed:`, err);
     }
