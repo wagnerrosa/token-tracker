@@ -10,27 +10,47 @@ function eventDate(ts) {
   return new Date(ts).toISOString().slice(0, 10);
 }
 
-function eventFile(source, date) {
-  return path.join(getEventsDir(), source, `${date}.jsonl`);
-}
-
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function encodeUserId(userId) {
+  if (!userId) return "_nouser";
+  return encodeURIComponent(userId);
+}
+
+function useLayoutB() {
+  return process.env.TT_EVENT_LAYOUT === "B";
+}
+
+function layoutAFile(eventsDir, source, date, userId) {
+  return path.join(eventsDir, source, date, `${encodeUserId(userId)}.jsonl`);
+}
+
+function layoutBFile(eventsDir, source, date) {
+  return path.join(eventsDir, source, `${date}.jsonl`);
 }
 
 async function appendToDir(events, eventsDir) {
   if (!events || events.length === 0) return;
 
+  const layoutB = useLayoutB();
   const groups = new Map();
   for (const ev of events) {
     const date = eventDate(ev.ts);
-    const key = `${ev.source}/${date}`;
-    if (!groups.has(key)) groups.set(key, { source: ev.source, date, lines: [] });
+    const key = layoutB
+      ? `${ev.source}/${date}`
+      : `${ev.source}/${date}/${encodeUserId(ev.user_id)}`;
+    if (!groups.has(key)) {
+      const file = layoutB
+        ? layoutBFile(eventsDir, ev.source, date)
+        : layoutAFile(eventsDir, ev.source, date, ev.user_id);
+      groups.set(key, { file, lines: [] });
+    }
     groups.get(key).lines.push(JSON.stringify(ev));
   }
 
-  for (const { source, date, lines } of groups.values()) {
-    const file = path.join(eventsDir, source, `${date}.jsonl`);
+  for (const { file, lines } of groups.values()) {
     await fsp.mkdir(path.dirname(file), { recursive: true });
     await fsp.appendFile(file, lines.join("\n") + "\n");
   }
@@ -40,21 +60,38 @@ async function append(events) {
   return appendToDir(events, getEventsDir());
 }
 
+function fileDateFromPath(f) {
+  // Layout A: .../{source}/{date}/{user}.jsonl → parent dir = date
+  // Layout B: .../{source}/{date}.jsonl        → basename without ext = date
+  const parent = path.basename(path.dirname(f));
+  if (/^\d{4}-\d{2}-\d{2}$/.test(parent)) return parent;
+  return path.basename(f, ".jsonl");
+}
+
+async function collectEventFiles(eventsDir, source) {
+  // Dual-layout scan: B (flat date.jsonl) + A (date/user.jsonl) + compacted archive.
+  const patternB = path.join(eventsDir, source, "*.jsonl");
+  const patternA = path.join(eventsDir, source, "*", "*.jsonl");
+  const patternCompact = path.join(eventsDir, "_compact", source, "*.jsonl");
+  const out = [];
+  for (const p of [patternB, patternA, patternCompact]) {
+    try {
+      const f = await glob(p, { nodir: true });
+      out.push(...f);
+    } catch { /* ignore */ }
+  }
+  return out;
+}
+
 async function read({ source, since, until, project } = {}) {
   const sources = source ? [source] : await listSources();
   const results = [];
 
   for (const src of sources) {
-    const pattern = path.join(getEventsDir(), src, "*.jsonl");
-    let files;
-    try {
-      files = await glob(pattern, { nodir: true });
-    } catch {
-      continue;
-    }
+    const files = await collectEventFiles(getEventsDir(), src);
 
     for (const f of files) {
-      const date = path.basename(f, ".jsonl");
+      const date = fileDateFromPath(f);
       if (since && date < eventDate(since)) continue;
       if (until && date > eventDate(until)) continue;
 
@@ -90,7 +127,22 @@ async function read({ source, since, until, project } = {}) {
 async function listSources() {
   try {
     const entries = await fsp.readdir(getEventsDir(), { withFileTypes: true });
-    return entries.filter((e) => e.isDirectory()).map((e) => e.name);
+    const sources = new Set(
+      entries
+        .filter((e) => e.isDirectory() && e.name !== "_compact")
+        .map((e) => e.name),
+    );
+    // Also include sources that only exist in _compact/ archive
+    try {
+      const compactEntries = await fsp.readdir(
+        path.join(getEventsDir(), "_compact"),
+        { withFileTypes: true },
+      );
+      for (const e of compactEntries) {
+        if (e.isDirectory()) sources.add(e.name);
+      }
+    } catch { /* no compact dir */ }
+    return [...sources];
   } catch {
     return [];
   }
@@ -133,21 +185,35 @@ async function saveCursor(source, cursor, userId) {
 }
 
 async function recoverSeenKeys(source) {
-  const file = eventFile(source, todayISO());
+  const today = todayISO();
   const keys = new Set();
-  let raw;
+  const candidates = [
+    layoutBFile(getEventsDir(), source, today),
+  ];
+  // Layout A: scan all user files for today's date
   try {
-    raw = await fsp.readFile(file, "utf8");
-  } catch {
-    return keys;
-  }
-  for (const line of raw.split("\n")) {
-    if (!line.trim()) continue;
+    const dir = path.join(getEventsDir(), source, today);
+    const entries = await fsp.readdir(dir);
+    for (const e of entries) {
+      if (e.endsWith(".jsonl")) candidates.push(path.join(dir, e));
+    }
+  } catch { /* no layout A for today */ }
+
+  for (const file of candidates) {
+    let raw;
     try {
-      const ev = JSON.parse(line);
-      if (ev.dedup_key) keys.add(ev.dedup_key);
+      raw = await fsp.readFile(file, "utf8");
     } catch {
       continue;
+    }
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const ev = JSON.parse(line);
+        if (ev.dedup_key) keys.add(ev.dedup_key);
+      } catch {
+        continue;
+      }
     }
   }
   return keys;
@@ -283,6 +349,7 @@ module.exports = {
   ingestAll,
   enrichCosts,
   belongsToRepo,
+  encodeUserId,
   get EVENTS_DIR() { return getEventsDir(); },
   get CURSORS_DIR() { return getCursorsDir(); },
 };

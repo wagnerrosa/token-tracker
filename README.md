@@ -94,18 +94,29 @@ When you run `tt` inside a Git repository, TokenTracker automatically detects it
 - Team members can consolidate usage costs in a single repository view
 - No cross-project event leakage: events scoped to their origin project are isolated
 
-**Setup (optional):**
+**Setup for team repos (recommended):**
 
 Add to your repo's `.gitattributes`:
 ```
+# Per-user per-day event files + compacted archive
 .token-tracker/events/**/*.jsonl merge=union
 ```
 
 Add to your repo's `.gitignore`:
 ```
-# TokenTracker state (local to each developer)
+# TokenTracker state (local to each developer, never commit)
 .token-tracker/cache/
 .token-tracker/cursors/
+.token-tracker/pricing.json
+```
+
+**Resolving merge conflicts:**
+
+If two team members commit events for the same date/user, Git's `merge=union` strategy automatically combines lines (events). If conflicts still occur, manually merge the JSONL files:
+```bash
+# Both sides have .token-tracker/events/claude/2026-04-21/alice@example.com.jsonl
+git checkout --theirs .token-tracker/events/claude/2026-04-21/alice@example.com.jsonl
+# Then re-run: tt (to aggregate with both sets of events)
 ```
 
 ### Forcing global storage
@@ -200,11 +211,40 @@ tt --user alice@example.com
 tt --by-user --json
 ```
 
+### Archiving and rotation
+
+For large repos, compact old events to reduce JSONL file count:
+
+```bash
+# Preview impact (no files modified)
+tt compact --before 2026-01-01 --dry-run
+
+# Apply (requires --yes to confirm)
+tt compact --before 2026-01-01 --yes
+
+# This aggregates and removes raw events older than the date,
+# replacing them with compacted summaries in .token-tracker/events/_compact/
+```
+
+**When to compact:**
+- After 1+ month of team usage (100s of events accumulating)
+- Before archiving old quarters for audit trail
+- If `.token-tracker/` directory size exceeds your Git limits
+
+**What happens:**
+- Raw JSONL files (older than `--before`) are aggregated by `(date, source, model, user_id, project_id)`
+- Each aggregate is a single event with `compacted: true` and `compacted_count: N`
+- Totals (tokens, cost) are preserved exactly
+- Original files are deleted; `.token-tracker/events/_compact/{source}/{date}.jsonl` holds the archive
+- Re-running `tt compact` is idempotent: existing archive is merged, totals stay exact
+
 ### Diagnostics
 
 ```bash
 tt doctor
 ```
+
+Shows storage mode, layout version, user_id strategy, and event health.
 
 ### Help
 
@@ -236,18 +276,22 @@ All providers are merged into one unified model for reporting.
 ~/.local/share/opencode/ --/                                
                                   |
                                   v
-                    Events are deduped and scoped:
-                    - If in Git repo: ./.token-tracker/events/...
-                    - Otherwise: ~/.token-tracker/events/...
+                    Events are deduped, tagged with user_id, and scoped:
+                    - If in Git repo: ./.token-tracker/events/{source}/{date}/{user_id}.jsonl
+                    - Otherwise: ~/.token-tracker/events/{source}/{date}/{user_id}.jsonl
                                   |
                                   v
-                          Cursors (per-user):
+                          Cursors (per-user, local state):
                     - Repo mode: ./.token-tracker/cursors/{source}/{user_id}.json
                     - Global: ~/.token-tracker/cursors/{source}/{user_id}.json
                                   |
                                   v
+                  Optional: compact old events (archive to _compact/)
+                          (preserves totals, reduces file count)
+                                  |
+                                  v
                           aggregate(events) on-demand
-                          (by period, project, user)
+                          (by period, project, user, model)
                                   |
                                   v
                          pricing.js (MODELS + LiteLLM cache)
@@ -297,18 +341,28 @@ TokenTracker stores data in either `./.token-tracker` (repo mode, when inside a 
 
 ```text
 ./.token-tracker/  (or ~/.token-tracker/)
-  events/{source}/{YYYY-MM-DD}.jsonl      # source of truth (append-only)
-  cursors/{source}/{user_id}.json         # dedup + source-specific state (per user)
-  pricing.json                            # LiteLLM cache (TTL 1h)
-  config.json                             # onboarding flag
+  events/{source}/{YYYY-MM-DD}/{user_id}.jsonl  # layout A (default): per-user per-day files
+                                                 # → reduces merge conflicts in team repos
+  events/_compact/{source}/{YYYY-MM-DD}.jsonl   # aggregated events (via tt compact)
+  cursors/{source}/{user_id}.json               # dedup state (per user, local)
+  pricing.json                                  # LiteLLM cache (TTL 1h)
+  config.json                                   # onboarding flag
 ```
+
+**Storage layout options:**
+- **Layout A** (default): `events/{source}/{YYYY-MM-DD}/{user_id}.jsonl` — one file per user per day
+  - Better for multi-user repos: fewer merge conflicts (each user writes their own file)
+  - Use `tt compact --before <date> --yes` to aggregate old events into `_compact/`
+- **Layout B** (legacy): `events/{source}/{YYYY-MM-DD}.jsonl` — all users in one daily file
+  - Set `export TT_EVENT_LAYOUT=B` to opt out of layout A
 
 **Repo-local files (in `.gitignore`):**
 - `cursors/` — never commit (local state, regenerated per developer)
 - `cache/` — legacy caches (auto-cleaned by `tt doctor`)
 
 **Repo-shared files (committed):**
-- `events/` — shared event history (use `merge=union` in `.gitattributes`)
+- `events/{source}/` — shared event history (events from all team members)
+- `events/_compact/{source}/` — archived aggregated events (created by `tt compact`)
 - `pricing.json` — shared pricing cache (safe to version)
 
 Legacy `cache/` data can still exist from older versions; `tt doctor` will flag it.
@@ -332,6 +386,7 @@ Legacy `cache/` data can still exist from older versions; `tt doctor` will flag 
 | 1-11a | Done | Rebuild + multi-provider ingestion/parsers/CLI/pricing |
 | 12-15 | Done | Data validation, pricing robustness, project tracking |
 | N1-N6 | Done | Architecture migration: append-only event log + pure aggregate + project-first |
+| Storage | Done | Per-repo storage + user_id + collaboration + layout A + `tt compact` |
 | 16 | Planned | Performance guardrails + benchmarks |
 | 17 | Planned | Watch mode (`tt watch`) |
 | 18 | Planned | REST API (`/api/summary`, `/api/daily`, `/api/projects`) |

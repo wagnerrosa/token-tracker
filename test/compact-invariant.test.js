@@ -306,7 +306,67 @@ test("compact: cache_read/cache_write/reasoning tokens preserved", async () => {
   assert.equal(afterSum.reasoning, before.reasoning, "reasoning preserved");
 });
 
-// --- Invariant 8: project_id + user_id preserved in aggregates ---
+// --- Invariant 8: re-compact is idempotent on totals ---
+
+test("compact: re-compact preserves totals (idempotent)", async () => {
+  const eventsDir = path.join(tmpRoot, "events");
+  const events = [
+    makeEvent({ ts: "2024-01-08T10:00:00Z", input_tokens: 100, output_tokens: 50, cost_usd: 0.001 }),
+    makeEvent({ ts: "2024-01-08T11:00:00Z", input_tokens: 200, output_tokens: 75, cost_usd: 0.002 }),
+  ];
+  await writeLayoutB(eventsDir, "claude", "2024-01-08", events);
+
+  const before = sumEvents(events);
+
+  const { compactBefore } = require("../src/compact");
+  await compactBefore("2024-01-11", { eventsDir });
+  await compactBefore("2024-01-11", { eventsDir });
+  await compactBefore("2024-01-11", { eventsDir });
+
+  const { read } = require("../src/event-log");
+  const after = await read({ source: "claude" });
+  const afterSum = sumEvents(after);
+
+  assert.equal(afterSum.input, before.input, "input invariant under re-compact");
+  assert.equal(afterSum.output, before.output, "output invariant under re-compact");
+  assert.equal(afterSum.cost.toFixed(8), before.cost.toFixed(8), "cost invariant under re-compact");
+  assert.equal(after.length, 1, "still 1 aggregate after 3 compactions");
+});
+
+// --- Invariant 9: re-compact merges new raw events with existing archive ---
+
+test("compact: new raw events merged into existing archive on re-compact", async () => {
+  const eventsDir = path.join(tmpRoot, "events");
+
+  // First batch
+  const batch1 = [
+    makeEvent({ ts: "2024-01-08T10:00:00Z", input_tokens: 100, output_tokens: 50, cost_usd: 0.001, dedup_key: "b1a" }),
+  ];
+  await writeLayoutB(eventsDir, "claude", "2024-01-08", batch1);
+
+  const { compactBefore } = require("../src/compact");
+  await compactBefore("2024-01-11", { eventsDir });
+
+  // Second batch arrives later for same date (different content)
+  const batch2 = [
+    makeEvent({ ts: "2024-01-08T15:00:00Z", input_tokens: 300, output_tokens: 120, cost_usd: 0.003, dedup_key: "b2a" }),
+  ];
+  await writeLayoutB(eventsDir, "claude", "2024-01-08", batch2);
+
+  await compactBefore("2024-01-11", { eventsDir });
+
+  const { read } = require("../src/event-log");
+  const after = await read({ source: "claude" });
+  const afterSum = sumEvents(after);
+
+  assert.equal(afterSum.input, 400, "both batches summed");
+  assert.equal(afterSum.output, 170);
+  assert.equal(afterSum.cost.toFixed(8), (0.004).toFixed(8));
+  assert.equal(after.length, 1, "merged into single aggregate");
+  assert.equal(after[0].compacted_count, 2);
+});
+
+// --- Invariant 10: project_id + user_id preserved in aggregates ---
 
 test("compact: project_id and user_id preserved in aggregate events", async () => {
   const eventsDir = path.join(tmpRoot, "events");
