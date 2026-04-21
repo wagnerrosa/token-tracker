@@ -233,6 +233,17 @@ tt --project .
 tt daily --project .
 ```
 
+### Context-aware usage
+
+When you run `tt` inside a Git repository, the default output is split into two blocks:
+
+- `global` for today's overall usage in the current storage
+- `project (name)` for the current repository, filtered by `project_path`
+
+The same split applies to `tt daily` and `tt weekly`.
+
+Use `tt --project .` for focused project-only output with no global block.
+
 ### Users (team collaboration)
 
 ```bash

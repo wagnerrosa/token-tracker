@@ -67,19 +67,43 @@ test("snapshot: default output (no flags) is stable across versions", () => {
 
   const output = result.stdout;
 
-  // Assertions: output structure is stable (no Users block for single user)
-  assert.ok(output.includes("tt"), "header present");
+  const repoName = path.basename(tmpRoot);
+
+  // Assertions: output structure is stable with global + project blocks
+  assert.ok(output.includes("global"), "global block present");
+  assert.ok(output.includes(`project (${repoName})`), "project block present");
   assert.ok(output.includes("Tokens"), "Tokens section present");
   assert.ok(output.includes("Models"), "Models section present");
   assert.ok(output.includes("claude-3-5-sonnet"), "model listed");
   assert.ok(!output.includes("Users"), "Users block absent for single user");
   assert.ok(!output.includes("top user"), "no 'top user' insight for single user");
+  assert.ok(output.includes("project accounts for"), "project share insight present");
 
   // Verify single-user output does NOT reference --by-user or --user in main body
   // (these appear only in help, not in actual output flow)
   const mainContent = output.split("Insights")[0]; // before any insights
   assert.ok(!mainContent.includes("--by-user"));
   assert.ok(!mainContent.includes("--user"));
+});
+
+test("snapshot: --project . shows focused project block only", () => {
+  const parsersPath = require.resolve("../src/parsers");
+  require.cache[parsersPath] = {
+    id: parsersPath,
+    filename: parsersPath,
+    loaded: true,
+    exports: { getAll: () => [], getByName: () => null },
+  };
+
+  const result = spawnSync("node", [path.join(__dirname, "../src/cli.js"), "--project", "."], {
+    cwd: tmpRoot,
+    env: { ...process.env, TT_HOME: process.env.TT_HOME },
+    encoding: "utf8",
+  });
+
+  const output = result.stdout;
+  assert.ok(output.includes(`project (${path.basename(tmpRoot)})`), "focused project label present");
+  assert.ok(!output.includes("global"), "global block omitted in focused mode");
 });
 
 test("snapshot: --json output is parseable JSON", () => {

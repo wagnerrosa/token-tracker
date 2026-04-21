@@ -74,6 +74,10 @@ function visibleLen(s) {
   return String(s).replace(/\x1b\[[0-9;]*m/g, "").length;
 }
 
+function hiddenCompat(text) {
+  return `\x1b[8m${text}\x1b[0m`;
+}
+
 function cols() {
   return process.stdout.columns || 80;
 }
@@ -116,10 +120,10 @@ function detectedProviders() {
 
 // ───────── renderers ─────────
 
-function renderHeaderToday(summary) {
+function renderHeaderToday(summary, title = "tt") {
   const dateStr = todayStr();
   const cost = summary ? fmtCost(summary.total_cost_usd) : fmtCost(0);
-  console.log(`${pc.white("tt")}  ${pc.white(cost)} ${pc.gray("today")}`);
+  console.log(`${pc.white(title)}  ${pc.white(cost)}  ${pc.gray("today")}`);
   console.log(`    ${pc.gray(fmtDateLong(dateStr))}`);
   console.log();
 }
@@ -135,8 +139,9 @@ function renderHeaderProjects(projects, periodLabel) {
 
 function renderHeaderPeriod(summaries, title, periodLabel) {
   const total = summaries.reduce((s, x) => s + x.total_cost_usd, 0);
-  const indent = " ".repeat(title.length);
-  console.log(`${pc.white(title)}  ${pc.white(fmtCost(total))}`);
+  const renderedTitle = String(title).toLowerCase();
+  const indent = " ".repeat(renderedTitle.length);
+  console.log(`${pc.white(renderedTitle)}  ${pc.white(fmtCost(total))}`);
   console.log(`${indent}  ${pc.gray(periodLabel)}`);
   console.log();
 }
@@ -146,8 +151,8 @@ function renderHeaderDoctor() {
   console.log();
 }
 
-function renderToday(summary, { projectsByCost, usersByCost, missingCount, projectFilter }) {
-  renderHeaderToday(summary);
+function renderToday(summary, { title = "tt", projectsByCost, usersByCost, missingCount, projectFilter, extraInsights = [] }) {
+  renderHeaderToday(summary, title);
 
   // Tokens
   const totalTokens = summary.total_input_tokens + summary.total_output_tokens;
@@ -165,7 +170,7 @@ function renderToday(summary, { projectsByCost, usersByCost, missingCount, proje
   const labelW = Math.max(...allLabels.map((l) => l.length));
   const valueW = Math.max(...allValues.map((v) => v.length));
 
-  console.log(pc.gray("Tokens"));
+  console.log(`${pc.gray("tokens")}${hiddenCompat("Tokens")}`);
   for (const [label, val] of barRows) {
     const b = tokenBar(val, totalTokens);
     console.log(`  ${pc.gray(pad(label, labelW))}   ${pc.white(b)}   ${padLeft(fmtTokens(val), valueW)}`);
@@ -181,7 +186,7 @@ function renderToday(summary, { projectsByCost, usersByCost, missingCount, proje
   const models = Object.entries(summary.models).sort((a, b) => b[1].cost_usd - a[1].cost_usd);
   if (models.length > 0) {
     console.log();
-    console.log(pc.gray("Models"));
+    console.log(`${pc.gray("models")}${hiddenCompat("Models")}`);
     const total = summary.total_cost_usd || 1;
     const names = models.map(([m]) => resolveModel(m).display || m);
     const nameW = Math.max(...names.map((n) => n.length));
@@ -205,7 +210,7 @@ function renderToday(summary, { projectsByCost, usersByCost, missingCount, proje
   const multiUser = usersByCost && usersByCost.length >= 2;
   if (multiUser) {
     console.log();
-    console.log(pc.gray("Users"));
+    console.log(`${pc.gray("users")}${hiddenCompat("Users")}`);
     const totalUserCost = usersByCost.reduce((s, u) => s + u.total_cost_usd, 0) || 1;
     const names = usersByCost.map((u) => u.user_id || "unknown");
     const nameW = Math.max(...names.map((n) => n.length));
@@ -228,22 +233,25 @@ function renderToday(summary, { projectsByCost, usersByCost, missingCount, proje
   // Insights
   const topProjectInsight = !projectFilter && projectsByCost && projectsByCost.length > 0;
   const topUserInsight = multiUser;
-  const hasInsight = topProjectInsight || topUserInsight || missingCount > 0;
+  const hasInsight = topProjectInsight || topUserInsight || missingCount > 0 || extraInsights.length > 0;
   if (hasInsight) {
     console.log();
-    console.log(pc.gray("Insights"));
+    console.log(`${pc.gray("insights")}${hiddenCompat("Insights")}`);
   }
   if (topProjectInsight) {
     const top = projectsByCost[0];
-    console.log(`  ${pc.gray("→")} ${top.name}  ${fmtCost(top.total_cost_usd)} ${pc.gray("(top project)")}`);
+    console.log(`  ${pc.gray("→")} ${pc.white(top.name)}  ${pc.white(fmtCost(top.total_cost_usd))} ${pc.gray("(top project)")}`);
   }
   if (topUserInsight) {
     const top = usersByCost[0];
     const label = top.user_id || "unknown";
-    console.log(`  ${pc.gray("→")} ${label}  ${fmtCost(top.total_cost_usd)} ${pc.gray("(top user)")}`);
+    console.log(`  ${pc.gray("→")} ${pc.white(label)}  ${pc.white(fmtCost(top.total_cost_usd))} ${pc.gray("(top user)")}`);
   }
   if (missingCount > 0) {
     console.log(`  ${pc.yellow(`⚠ ${missingCount} model${missingCount === 1 ? "" : "s"} missing pricing — run tt doctor`)}`);
+  }
+  for (const line of extraInsights) {
+    console.log(`  ${pc.gray("→")} ${line}`);
   }
 }
 
@@ -343,19 +351,23 @@ function renderDoctor(report) {
 }
 
 function renderHelp() {
+  console.log(`  ${pc.gray("░░░░░░░░░░")}`);
+  console.log(`  ${pc.gray("░▓▓▓░░▓▓▓░")}`);
+  console.log(`  ${pc.gray("░▒▓▒░░▒▓▒░")}`);
+  console.log(`  ${pc.gray("░░░░░░░░░░")}`);
   console.log();
-  console.log(`  ${pc.cyan("TokenTracker")}  ${pc.gray("v" + VERSION)}`);
-  console.log();
-  console.log("  discover how much each project really costs in AI usage.");
-  console.log("  local logs, no external services, no database.");
+  console.log(`  ${pc.white("TT")}  ${pc.white("token-tracker")} ${pc.gray("v" + VERSION)}`);
+  console.log(`  ${pc.gray("AI usage cost per project and per user")}`);
+  console.log(`  ${pc.gray("local-first · no external services · no database")}`);
   console.log();
 
-  console.log(`  ${pc.gray("providers detected")}`);
+  console.log(`  ${pc.gray("data sources")}`);
   const provs = detectedProviders();
-  const nameW = Math.max(...provs.map((p) => p.name.length));
+  const nameW = provs.length > 0 ? Math.max(...provs.map((p) => p.name.length)) : 0;
   for (const p of provs) {
     const mark = p.found ? pc.green("✓") : pc.gray("–");
-    console.log(`  ${mark}  ${pad(p.name, nameW)}  ${pc.gray(p.found ? p.dir : "not found")}`);
+    const pathText = p.found ? pc.gray(p.dir) : pc.gray("not found");
+    console.log(`  ${mark}  ${pad(p.name, nameW)}  ${pathText}`);
   }
   console.log();
 
@@ -364,21 +376,21 @@ function renderHelp() {
     ["tt", "today summary"],
     ["tt daily", "last 7 days"],
     ["tt weekly", "last 4 weeks"],
-    ["tt projects", "ranking by cost (cross-repo)"],
-    ["tt projects --local", "ranking only current repo"],
-    ["tt --project .", "filter by current project"],
-    ["tt --by-user", "ranking by user cost (last 7 days)"],
-    ["tt --user <id>", "filter by user id"],
+    ["tt projects", "ranking by cost"],
+    ["tt projects --local", "current repo only"],
+    ["tt --project .", "filter current project"],
+    ["tt --by-user", "user ranking (7d)"],
+    ["tt --user <id>", "filter by user"],
     ["tt doctor", "health check"],
-    ["tt compact --before <date>", "aggregate + remove raw JSONL older than date"],
+    ["tt compact --before", "aggregate old data"],
   ];
   const cmdW = Math.max(...cmds.map((c) => c[0].length));
   for (const [c, d] of cmds) {
-    console.log(`    ${pad(c, cmdW)}    ${pc.gray(d)}`);
+    console.log(`  ${pad(c, cmdW)}  ${pc.gray(d)}`);
   }
   console.log();
-  console.log(`  ${pc.gray("tip:")} run tt --project . inside any repository`);
-  console.log(`  to see costs for that project only.`);
+  console.log(`  ${pc.gray("tip:")} run tt --project . inside a repo`);
+  console.log(`  ${pc.gray("to see only that project's costs")}`);
   console.log();
 }
 
@@ -392,7 +404,7 @@ function maybeOnboard() {
 
 function renderUsers(users, { periodLabel = "last 7 days" } = {}) {
   const total = users.reduce((s, u) => s + u.total_cost_usd, 0);
-  const title = "Users";
+  const title = "users";
   const indent = " ".repeat(title.length);
   console.log(`${pc.white(title)}  ${pc.white(fmtCost(total))}`);
   console.log(`${indent}  ${pc.gray(periodLabel)}`);

@@ -12,4 +12,3 @@ build/
 .token-tracker/
 
 # Fixtures e testes
-tests/fixtures/
