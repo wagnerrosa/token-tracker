@@ -106,6 +106,58 @@ test("snapshot: project command shows focused project block only", () => {
   assert.ok(!output.includes("global"), "global block omitted in focused mode");
 });
 
+test("snapshot: users commands rank by user and respect project scoping", async () => {
+  const todayFile = new Date().toISOString().slice(0, 10);
+  const eventsDir = path.join(process.env.TT_HOME, "events", "claude");
+  const otherProjectPath = path.join(tmpRoot, "other-project");
+  const bobEvent = {
+    id: "4",
+    ts: new Date().toISOString(),
+    source: "claude",
+    model: "claude-3-5-sonnet",
+    input_tokens: 250,
+    output_tokens: 125,
+    cost_usd: 6.25,
+    cost_source: "computed",
+    user_id: "bob@example.com",
+    user_name: "Bob",
+    project_id: "other-proj",
+    project_path: otherProjectPath,
+    dedup_key: "b1",
+  };
+  await fsp.appendFile(path.join(eventsDir, `${todayFile}.jsonl`), JSON.stringify(bobEvent) + "\n");
+
+  const parsersPath = require.resolve("../src/parsers");
+  require.cache[parsersPath] = {
+    id: parsersPath,
+    filename: parsersPath,
+    loaded: true,
+    exports: { getAll: () => [], getByName: () => null },
+  };
+
+  const usersResult = spawnSync("node", [path.join(__dirname, "../src/cli.js"), "users"], {
+    cwd: tmpRoot,
+    env: { ...process.env, TT_HOME: process.env.TT_HOME },
+    encoding: "utf8",
+  });
+
+  assert.equal(usersResult.status, 0);
+  assert.ok(usersResult.stdout.includes("users"), "users heading present");
+  assert.ok(usersResult.stdout.includes("alice@example.com"), "current project user present");
+  assert.ok(usersResult.stdout.includes("bob@example.com"), "second user present in global ranking");
+
+  const projectUsersResult = spawnSync("node", [path.join(__dirname, "../src/cli.js"), "project", "users"], {
+    cwd: tmpRoot,
+    env: { ...process.env, TT_HOME: process.env.TT_HOME },
+    encoding: "utf8",
+  });
+
+  assert.equal(projectUsersResult.status, 0);
+  assert.ok(projectUsersResult.stdout.includes("users"), "project users heading present");
+  assert.ok(projectUsersResult.stdout.includes("alice@example.com"), "project-scoped user present");
+  assert.ok(!projectUsersResult.stdout.includes("bob@example.com"), "external project user excluded");
+});
+
 test("snapshot: help alias prints onboarding/help screen", () => {
   const result = spawnSync("node", [path.join(__dirname, "../src/cli.js"), "help"], {
     cwd: tmpRoot,

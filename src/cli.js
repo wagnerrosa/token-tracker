@@ -27,6 +27,8 @@ if (rest.length > 0 && !rest[0].startsWith("-")) {
 }
 const isProjectCmd = cmd === "project";
 const subcmd = isProjectCmd ? rest[1] : cmd;
+const isUsersCmd = subcmd === "users";
+const usersSubcmd = isProjectCmd ? rest[2] : rest[1];
 
 function warnOldCache() {
   const ttHome = getTTHome();
@@ -174,6 +176,7 @@ async function main() {
 
   // --by-user ranking
   if (byUserFlag) {
+    console.warn("warning: --by-user is deprecated. use `tt users` instead.");
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const users = byUser(events, { since });
     if (jsonFlag) {
@@ -232,6 +235,34 @@ async function main() {
   focusedProjectName = projectFilterResolved ? path.basename(projectFilterResolved) || "project" : currentProjectName;
 
   const daily = aggregate(scoped, { granularity: "daily" });
+
+  if (isUsersCmd) {
+    let sourceEvents = projectFocused ? scoped : events;
+    let since;
+    let periodLabel;
+    if (usersSubcmd === "weekly") {
+      since = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString();
+      periodLabel = "last 4 weeks";
+    } else if (usersSubcmd === "daily") {
+      since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      periodLabel = "last 7 days";
+    } else {
+      const today = ui.todayStr();
+      sourceEvents = sourceEvents.filter((e) => localDate(e.ts) === today);
+      periodLabel = "today";
+    }
+    const users = byUser(sourceEvents, since ? { since } : {});
+    if (jsonFlag) {
+      console.log(JSON.stringify(users, null, 2));
+      return;
+    }
+    if (users.length === 0) {
+      ui.renderEmpty("no data");
+      return;
+    }
+    ui.renderUsers(users, { periodLabel });
+    return;
+  }
 
   if (subcmd === "daily") {
     const globalDaily = aggregate(events, { granularity: "daily" });
