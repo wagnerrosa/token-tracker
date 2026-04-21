@@ -4,7 +4,7 @@ const fs = require("fs");
 const fsp = require("fs/promises");
 const path = require("path");
 const { glob } = require("glob");
-const { getTTHome } = require("./storage-path");
+const { getTTHome, getStorageMode } = require("./storage-path");
 const { EVENTS_DIR, CURSORS_DIR } = require("./event-log");
 const { resolveModel, MODELS, CACHE_PATH: PRICING_CACHE_PATH } = require("./services/pricing");
 const ui = require("./ui");
@@ -132,6 +132,12 @@ async function doctor() {
 
   // 3. Storage
   const ttHome = getTTHome();
+  const storageMode = getStorageMode();
+  storage.items.push({
+    level: "ok",
+    text: `mode ${ui.pc.gray(storageMode)} · path ${ttHome}`,
+  });
+
   try {
     const entries = await fsp.readdir(ttHome, { withFileTypes: true, recursive: true });
     let fileCount = 0;
@@ -149,10 +155,10 @@ async function doctor() {
     const mb = (totalBytes / 1024 / 1024).toFixed(1);
     storage.items.push({
       level: "ok",
-      text: `${ttHome}  ${ui.pc.gray(`${fileCount} files · ${mb} MB`)}`,
+      text: `${ui.pc.gray(`${fileCount} files · ${mb} MB`)}`,
     });
   } catch {
-    storage.items.push({ level: "warn", text: `${ttHome}  inaccessible` });
+    storage.items.push({ level: "warn", text: "inaccessible" });
   }
 
   const oldCache = path.join(ttHome, "cache");
@@ -163,19 +169,28 @@ async function doctor() {
     });
   }
 
-  // Cursors
+  // Cursors — check both legacy and new layouts
+  let cursorCount = 0;
   let cursorBad = 0;
-  for (const src of sources) {
-    const p = path.join(CURSORS_DIR, `${src}.json`);
-    try {
-      const raw = await fsp.readFile(p, "utf8");
-      JSON.parse(raw);
-    } catch {
-      cursorBad++;
+  try {
+    const pattern = path.join(CURSORS_DIR, "**", "*.json");
+    const files = await glob(pattern, { nodir: true });
+    for (const f of files) {
+      cursorCount++;
+      try {
+        const raw = await fsp.readFile(f, "utf8");
+        JSON.parse(raw);
+      } catch {
+        cursorBad++;
+      }
     }
+  } catch {
+    // cursor dir doesn't exist yet
   }
-  if (cursorBad > 0) {
-    storage.items.push({ level: "warn", text: `${cursorBad} invalid cursor(s)` });
+  if (cursorCount > 0) {
+    const level = cursorBad > 0 ? "warn" : "ok";
+    const mark = cursorBad > 0 ? `${cursorBad}/${cursorCount} bad` : `${cursorCount} valid`;
+    storage.items.push({ level, text: `cursors  ${ui.pc.gray(mark)}` });
   }
 
   sections.push(eventLog, pricingSection, storage);
