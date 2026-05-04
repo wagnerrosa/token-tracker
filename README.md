@@ -1,25 +1,65 @@
 # TokenTracker (TT)
 
+<img src="./imgs/token-tracker.png" alt="TokenTracker Logo" width="400">
+
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![License: ISC](https://img.shields.io/badge/license-ISC-blue.svg)](#license)
 [![Status](https://img.shields.io/badge/status-active%20development-brightgreen)](#roadmap)
 
 ```text
-··········  TT  token-tracker v1.0.0
-·▓▓▓··▓▓▓·  AI usage cost per project and per user
-··▓····▓··  local-first · no external services · no database
-··········
+[tt] token-tracker v1.0.0
+AI usage cost per project and per user
+local-first · no external services · no database
 ```
 
-**Understand what each project is actually costing in AI usage.**
+I’m a designer, not a backend engineer.
 
-TokenTracker is a local-first CLI that turns raw LLM logs into clear cost and usage insights by project, model, and time period.
+This started as a small internal tool to solve a very simple question in our team:
 
-No database. No external backend. Append-only event log as the source of truth.
+“How much is this project actually costing us in AI?”
+
+The data existed — but it was fragmented across tools, users, and logs.
+
+So I tried a different approach.
+
+**A small tool I built to understand what each project is actually costing in AI usage.**
+
+TokenTracker is a Git-friendly, repo-local CLI for tracking AI usage cost per project and per user.
+
+It stores append-oriented event logs inside your repository (`./.token-tracker`), partitions them per user to reduce merge conflicts, and computes cost on demand — no database, no backend, no SaaS.
+
+
+Git transports and merges the event history; the CLI performs deterministic aggregation.
+
+TokenTracker is not a dashboard or SaaS.
+
+It is a Git-friendly accounting layer for AI usage.
+This project prioritizes accurate cost accounting and practical team workflows over strict immutability or centralized control.
+
+It’s not a perfect system — and it wasn’t designed as one.
+
+It’s a pragmatic solution that worked well for a small team, and might be useful for others dealing with the same problem.
 
 ---
 
 ## Why TokenTracker
+
+This project didn’t start as a product idea.
+
+It started as a practical need: understanding AI cost at the level where work actually happens — the repository.
+
+### Why repo-local instead of per-user dashboards?
+
+AI usage is usually tracked per user or per tool.
+
+But real work happens per repository.
+
+TokenTracker makes the repository the natural boundary for cost:
+- events are stored alongside the code
+- teams merge usage history via Git
+- cost evolves with the project itself
+
+This enables multi-user cost tracking without any central service.
 
 AI CLIs (Claude Code, Codex, Gemini, OpenCode) store usage locally, but that data is hard to compare and easy to lose context on.
 
@@ -28,7 +68,9 @@ AI CLIs (Claude Code, Codex, Gemini, OpenCode) store usage locally, but that dat
 | Per-provider siloed logs | Unified multi-provider view |
 | Weak project visibility | Project-first aggregation |
 | Missing/unknown model prices | Explicit missing-pricing diagnostics (`tt doctor`) |
-| Fragile derived caches | Append-only event log + pure aggregation |
+| Fragile derived caches | Append-oriented event log + pure aggregation |
+
+This approach came from experimenting, not from trying to design a perfect system upfront.
 
 ### What you can answer quickly
 
@@ -39,11 +81,13 @@ AI CLIs (Claude Code, Codex, Gemini, OpenCode) store usage locally, but that dat
 
 ### Core design choices
 
-- **Project-first**: project-level cost is a first-class outcome
-- **Append-only event log**: full history, no destructive rewrites
-- **Deterministic pricing**: explicit model table + aliases, no fuzzy matching
-- **On-demand aggregation**: no stale view cache
-- **Local by default**: your data stays on your machine
+- **Repo-local storage by default**: cost is tied to the repository, not the tool or machine
+- **Git-compatible event logs**: JSONL append semantics designed to work with Git merges
+- **Per-user partitioning**: one file per user per day to minimize merge conflicts
+- **Append-oriented log with compaction**: raw history preserved until optional aggregation
+- **Deterministic aggregation**: no background jobs, no cached summaries
+
+This design is intentional: event files are partitioned per user and per day to minimize Git merge conflicts in collaborative environments.
 
 ---
 
@@ -82,6 +126,8 @@ tt project weekly
 # User ranking (when collaborating)
 tt users
 tt users daily
+tt users weekly
+tt project users
 
 # Filter by user
 tt --user alice@example.com
@@ -95,7 +141,145 @@ tt help
 
 ---
 
+## Usage Examples
+
+### Today Summary (`tt`)
+
+```
+[tt] token-tracker v1.0.0
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ global (today)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Claude (claude-3-5-sonnet)         86.2k tokens   $2.84
+ Claude (claude-3-opus)             42.1k tokens   $1.82
+ Gemini (gemini-2.0-flash)          31.5k tokens   $0.34
+ ─────────────────────────────────────────────────
+ Total                             159.8k tokens   $5.00
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ project (token-tracker)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Claude (claude-3-5-sonnet)         52.0k tokens   $1.71
+ ─────────────────────────────────────────────────
+ Total                              52.0k tokens   $1.71
+```
+
+### Daily Summary (`tt daily`)
+
+```
+[tt] daily
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ global (last 7 days)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Date         Claude          Gemini          OpenCode       Total Cost
+ ─────────────────────────────────────────────────────────────────────
+ 2026-05-04   $5.00           $0.34           —              $5.34
+ 2026-05-03   $8.21           $0.87           $0.45          $9.53
+ 2026-05-02   $6.54           $0.12           —              $6.66
+ 2026-05-01   $12.34          $1.23           $2.10          $15.67
+ 2026-04-30   $4.18           $0.56           —              $4.74
+ 2026-04-29   $7.89           $0.34           $0.67          $8.90
+ 2026-04-28   $9.12           $0.78           $1.23          $11.13
+ ─────────────────────────────────────────────────────────────────────
+ TOTAL       $53.28          $4.24           $4.45          $61.97
+```
+
+### Projects Overview (`tt projects`)
+
+```
+[tt] projects
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Top Projects (last 7 days, cross-repo)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Project Name          Tokens    Claude    Gemini    OpenCode   Cost
+ ─────────────────────────────────────────────────────────────────────
+ token-tracker       298.2k    $12.34    $0.56     —          $12.90
+ planton-lp          512.4k    $21.87    $2.34     $1.45      $25.66
+ next-app            234.1k    $10.21    $1.12     $0.34      $11.67
+ python-utils        156.3k    $6.78     $0.22     —          $7.00
+ ─────────────────────────────────────────────────────────────────────
+ TOTAL             1,201.0k    $51.20    $4.24     $1.79      $57.23
+```
+
+### Users Breakdown (`tt users`)
+
+```
+[tt] users (today)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Ranking by Cost (today)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ User                      Tokens    Models Used              Cost
+ ─────────────────────────────────────────────────────────────────────
+ wagner.rosa@planton.eco   86.2k     claude-3-5-sonnet       $2.84
+ alice@example.com         52.1k     claude-3-opus, gemini   $2.12
+ bob@example.com           21.5k     claude-3-5-sonnet       $0.71
+ ─────────────────────────────────────────────────────────────────────
+ TOTAL                    159.8k                             $5.67
+```
+
+### Project with Users (`tt project users`)
+
+```
+[tt] project users (token-tracker)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ token-tracker — Users (today)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ User                      Tokens    claude-3-5   claude-3-opus   Cost
+ ─────────────────────────────────────────────────────────────────────
+ wagner.rosa@planton.eco   52.0k     52.0k        —              $1.71
+ ─────────────────────────────────────────────────────────────────────
+ TOTAL                     52.0k     52.0k        —              $1.71
+```
+
+### Health Diagnostics (`tt doctor`)
+
+```
+[tt] doctor
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Storage & Configuration
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Storage Mode            repo-local
+ Storage Path            ./.token-tracker
+ Layout Version          A (per-user per-day files)
+ User ID Strategy        email
+ Pricing Cache TTL       1h
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Event Files
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Total Events            1,247
+ Sources                 claude, gemini, opencode
+ Date Range              2026-04-15 to 2026-05-04
+ Missing Pricing         0 events (✓)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Repo Registry
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Registered Repos        3
+ Last Updated            2 days ago
+ Status                  ✓ healthy
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Conclusion              ✓ All systems nominal
+```
+
+---
+
 ## Storage Mode
+
+TokenTracker uses the filesystem (and optionally Git) as its storage layer.
+
+Instead of a database or central service, event logs live:
+- per repository (default)
+- or globally (`~/.token-tracker`)
+
+When used in a repo, Git becomes the transport and merge layer for multi-user usage.
 
 TokenTracker resolves storage lazily with this precedence:
 
@@ -104,7 +288,10 @@ TokenTracker resolves storage lazily with this precedence:
 3. current Git repo: `./.token-tracker`
 4. fallback global: `~/.token-tracker`
 
+
 In practice, this means:
+
+- In repo mode, the repository becomes the primary boundary for cost tracking, but some events may still be stored globally depending on their origin.
 - inside a Git repo, default storage is `./.token-tracker`
 - outside a Git repo, default storage is `~/.token-tracker`
 
@@ -179,6 +366,19 @@ echo 'export TT_STORAGE=global' >> ~/.bashrc  # or ~/.zshrc
 ## Collaboration
 
 When multiple team members use TokenTracker in the same repository, each contributor's events are tagged with their `user_id` (derived from `git config user.email`).
+
+### Why this works for teams
+
+TokenTracker avoids most Git conflicts by design:
+
+- each user writes to their own file (`{user_id}.jsonl`)
+- files are partitioned per day
+- JSONL append-oriented format works well with line-based merges
+
+Git does not understand events — it merges lines.
+TokenTracker handles aggregation and deduplication at runtime.
+This approach trades some guarantees (like strict immutability or centralized identity)
+for simplicity, transparency, and Git-native collaboration.
 
 **Commands:**
 ```bash
@@ -265,7 +465,13 @@ When you run `tt` inside a Git repository, the default output is split into two 
 - `global` for today's overall usage in the current storage
 - `project (name)` for the current repository, filtered by `project_path`
 
-The same split applies to `tt daily`, `tt weekly`, and `tt users`.
+The same split applies to `tt daily` and `tt weekly`.
+
+`tt users` is a separate user-ranking command with these periods:
+
+- `tt users` for today
+- `tt users daily` for the last 7 days
+- `tt users weekly` for the last 4 weeks
 
 Use `tt project` or `tt project users` for focused project-only output with no global block.
 
@@ -351,8 +557,9 @@ All providers are merged into one unified model for reporting.
                                   |
                                   v
                     Events are deduped, tagged with user_id, and scoped:
-                    - If in Git repo: ./.token-tracker/events/{source}/{date}/{user_id}.jsonl
-                    - Otherwise: ~/.token-tracker/events/{source}/{date}/{user_id}.jsonl
+                    - Default: ./.token-tracker/events/{source}/{date}/{user_id}.jsonl
+                    - Legacy B: ./.token-tracker/events/{source}/{date}.jsonl when TT_EVENT_LAYOUT=B
+                    - Global mode mirrors the same layouts under ~/.token-tracker/events/
                                   |
                                   v
                           Cursors (per-user, local state):
@@ -371,8 +578,12 @@ All providers are merged into one unified model for reporting.
                          pricing.js (MODELS + LiteLLM cache)
 ```
 
+Note:
+- Git is responsible for transporting and merging event files
+- TokenTracker performs all aggregation and accounting in-process
+
 1. Parsers read local logs and emit deduplicated `UsageEvent`s tagged with `user_id`
-1. Events are appended to storage (repo or global) under `events/{source}/{YYYY-MM-DD}.jsonl`
+1. Events are appended to storage (repo or global) under `events/{source}/{YYYY-MM-DD}/{user_id}.jsonl` by default, or `events/{source}/{YYYY-MM-DD}.jsonl` when `TT_EVENT_LAYOUT=B`
 1. Cursor state is saved atomically under `cursors/{source}/{user_id}.json` (per-user partition)
 4. Pricing is resolved via deterministic model aliases + LiteLLM pricing cache
 5. Aggregation is computed on demand with pure functions, supporting `byProject()`, `byUser()`, and time periods
@@ -415,8 +626,7 @@ TokenTracker stores data in either `./.token-tracker` (repo mode, when inside a 
 
 ```text
 ./.token-tracker/  (or ~/.token-tracker/)
-  events/{source}/{YYYY-MM-DD}/{user_id}.jsonl  # layout A (default): per-user per-day files
-                                                 # → reduces merge conflicts in team repos
+  events/{source}/{YYYY-MM-DD}/{user_id}.jsonl  # layout A (default): per-user per-day files (designed to reduce Git merge conflicts in team environments)
   events/_compact/{source}/{YYYY-MM-DD}.jsonl   # aggregated events (via tt compact)
   cursors/{source}/{user_id}.json               # dedup state (per user, local)
   pricing.json                                  # LiteLLM cache (TTL 1h)
@@ -432,7 +642,7 @@ TokenTracker stores data in either `./.token-tracker` (repo mode, when inside a 
 
 **Repo-local files (in `.gitignore`):**
 - `cursors/` — never commit (local state, regenerated per developer)
-- `cache/` — legacy caches (auto-cleaned by `tt doctor`)
+- `cache/` — legacy caches (auto-cleaned by `tt doctor`) 
 
 **Repo-shared files (committed):**
 - `events/{source}/` — shared event history (events from all team members)

@@ -357,10 +357,9 @@ function renderDoctor(report) {
 }
 
 function renderHelp() {
-  console.log(`  ${pc.gray("··········")}  ${pc.white("TT")}  ${pc.white("token-tracker")} ${pc.gray("v" + VERSION)}`);
-  console.log(`  ${pc.gray("·▓▓▓··▓▓▓·")}  ${pc.gray("AI usage cost per project and per user")}`);
-  console.log(`  ${pc.gray("··▓····▓··")}  ${pc.gray("local-first · no external services · no database")}`);
-  console.log(`  ${pc.gray("··········")}`);
+  console.log(`  ${pc.white("[tt]")}  ${pc.white("token-tracker")} ${pc.gray("v" + VERSION)}`);
+  console.log(`  ${pc.gray("AI usage cost per project and per user")}`);
+  console.log(`  ${pc.gray("local-first · no external services · no database")}`);
   console.log();
 
   console.log(`  ${pc.gray("data sources")}`);
